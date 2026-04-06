@@ -5897,8 +5897,8 @@ function ScheduleTab({ activeUser, currentUser, teamUsers = [], recurringWeeklyS
                 <select value={taskForm.propertyId} onChange={e=>setTaskForm(f=>({...f,propertyId:e.target.value}))} style={iStyle}><option value="">Link Job (optional)</option>{properties.map(p=><option key={p.id} value={p.id}>{p.address}</option>)}</select>
                 <select value={taskForm.clientId} onChange={e=>setTaskForm(f=>({...f,clientId:e.target.value}))} style={iStyle}><option value="">Link Client (optional)</option>{clients.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}</select>
               </div>
-              <div style={{display:"flex",justifyContent:"flex-end"}}>
-                <button onClick={saveTask} style={btnGreen}>{taskEditId ? "Save" : "Add"}</button>
+              <div style={{display:"flex",justifyContent:isMobile?"stretch":"flex-end"}}>
+                <button onClick={saveTask} style={{...btnGreen,width:isMobile?"100%":180}}>{taskEditId ? "Save" : "Add"}</button>
               </div>
             </div>
           )}
