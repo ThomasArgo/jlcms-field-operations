@@ -1031,31 +1031,92 @@ const buildPrintableInvoiceHtml = (invoice = {}, client = {}, property = {}, com
   <style>
     * { box-sizing: border-box; }
     html, body { margin:0; padding:0; background:#fff; color:#111; }
-    body { font-family: Arial, sans-serif; line-height:1.45; }
-    .page { max-width: 960px; margin: 0 auto; padding: 28px; }
-    .topbar { display:flex; justify-content:space-between; gap:18px; align-items:flex-start; margin-bottom: 20px; }
-    .eyebrow { font-size: 12px; color:#555; text-transform: uppercase; letter-spacing: .08em; }
-    h1 { margin: 0 0 4px; font-size: 26px; }
-    h2 { margin: 0 0 6px; font-size: 18px; }
-    .subhead { color:#444; margin-bottom: 2px; }
+    body { font-family: Arial, sans-serif; line-height:1.5; }
+    .page { max-width: 960px; margin: 0 auto; padding: 30px; }
+    .topbar {
+      display:flex;
+      justify-content:space-between;
+      gap:18px;
+      align-items:flex-start;
+      margin-bottom: 22px;
+      padding-bottom: 18px;
+      border-bottom: 2px solid #111827;
+    }
+    .eyebrow { font-size: 11px; color:#6b7280; text-transform: uppercase; letter-spacing: .14em; font-weight:700; }
+    h1 { margin: 6px 0 4px; font-size: 27px; line-height:1.15; }
+    h2 {
+      margin: 0 0 10px;
+      font-size: 14px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: .08em;
+      color:#1f2937;
+    }
+    .subhead { color:#4b5563; margin-bottom: 2px; }
     .invoice-header { text-align:right; min-width: 180px; }
-    .invoice-title { font-size: 28px; font-weight: 700; letter-spacing: .08em; }
+    .invoice-title { font-size: 30px; font-weight: 800; letter-spacing: .16em; }
     .grid { display:grid; grid-template-columns: 1fr 1fr; gap: 18px; margin-bottom: 22px; }
-    .box { border:1px solid #d1d5db; border-radius: 8px; padding: 14px; }
-    .label { display:block; font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.05em; color:#555; margin-bottom:2px; }
-    .value { margin-bottom:10px; }
+    .box {
+      border:1px solid #cbd5e1;
+      border-radius: 12px;
+      padding: 16px;
+      background: linear-gradient(180deg, #ffffff 0%, #f8fafc 100%);
+    }
+    .print-card { break-inside: avoid; page-break-inside: avoid; }
+    .label { display:block; font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:.08em; color:#6b7280; margin-bottom:3px; }
+    .value { margin-bottom:12px; color:#111827; }
     table { width:100%; border-collapse: collapse; margin-top: 8px; }
+    thead { display: table-header-group; }
+    tfoot { display: table-footer-group; }
     th, td { border:1px solid #d1d5db; padding: 9px 10px; text-align:left; vertical-align:top; }
-    th { background:#f8fafc; }
-    .totals { margin-top:16px; margin-left:auto; width: 320px; max-width:100%; border:2px solid #111; border-radius:10px; padding:12px 14px; }
+    th {
+      background:#eef2f7;
+      color:#1f2937;
+      font-size:11px;
+      text-transform:uppercase;
+      letter-spacing:.06em;
+    }
+    tr { break-inside: avoid; page-break-inside: avoid; }
+    .table-wrap { break-inside: auto; page-break-inside: auto; }
+    .totals {
+      margin-top:16px;
+      margin-left:auto;
+      width: 320px;
+      max-width:100%;
+      border:2px solid #111827;
+      border-radius:12px;
+      padding:12px 14px;
+      background:#fff;
+      break-inside: avoid;
+      page-break-inside: avoid;
+    }
     .totals-row { display:flex; justify-content:space-between; padding:6px 0; border-bottom:1px solid #e5e7eb; }
-    .totals-row.total { font-size:18px; font-weight:700; border-bottom:none; padding-top:10px; }
+    .totals-row.total { font-size:18px; font-weight:700; border-bottom:none; padding-top:10px; color:#111827; }
     .detail-grid { display:grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px 18px; }
-    .notes { border:1px solid #d1d5db; border-radius:8px; padding:12px 14px; white-space:pre-wrap; }
+    .notes {
+      border:1px solid #d1d5db;
+      border-radius:10px;
+      padding:12px 14px;
+      white-space:pre-wrap;
+      background:#fff;
+      break-inside: avoid;
+      page-break-inside: avoid;
+    }
     .summary-strip { display:grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap:12px; margin: 18px 0 22px; }
-    .summary-item { border:1px solid #d1d5db; border-radius:8px; padding:12px 14px; }
-    .summary-value { font-size:22px; font-weight:700; margin-top:4px; }
-    .footer { margin-top:28px; padding-top:14px; border-top:1px solid #d1d5db; font-size:12px; color:#555; }
+    .summary-item {
+      border:1px solid #cbd5e1;
+      border-radius:10px;
+      padding:12px 14px;
+      background:#f8fafc;
+    }
+    .summary-value { font-size:22px; font-weight:700; margin-top:4px; color:#111827; }
+    .footer {
+      margin-top:28px;
+      padding-top:14px;
+      border-top:1px solid #d1d5db;
+      font-size:12px;
+      color:#6b7280;
+    }
     .no-print { margin-bottom: 16px; }
     @media (max-width: 720px) {
       .topbar { flex-direction:column; }
@@ -1064,8 +1125,13 @@ const buildPrintableInvoiceHtml = (invoice = {}, client = {}, property = {}, com
     }
     @page { margin: 0.6in; }
     @media print {
+      html, body { background:#fff; }
+      body { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
       .page { max-width:none; padding:0; }
       .no-print { display:none; }
+      .topbar, .summary-strip, .grid, .box, .summary-item, .footer { break-inside: avoid; page-break-inside: avoid; }
+      .box { background:#fff; box-shadow:none; }
+      .table-wrap { overflow:visible; }
     }
   </style>
 </head>
@@ -1084,7 +1150,7 @@ const buildPrintableInvoiceHtml = (invoice = {}, client = {}, property = {}, com
       </div>
     </div>
 
-    <div class="summary-strip">
+    <div class="summary-strip print-card">
       <div class="summary-item">
         <span class="label">Invoice Status</span>
         <div class="summary-value">${escapeHtml(invoice.status || "Draft")}</div>
@@ -1099,8 +1165,8 @@ const buildPrintableInvoiceHtml = (invoice = {}, client = {}, property = {}, com
       </div>
     </div>
 
-    <div class="grid">
-      <div class="box">
+    <div class="grid print-card">
+      <div class="box print-card">
         <h2>Invoice Info</h2>
         <span class="label">Invoice ID</span>
         <div class="value">${escapeHtml(invoice.invoiceId || "--")}</div>
@@ -1117,7 +1183,7 @@ const buildPrintableInvoiceHtml = (invoice = {}, client = {}, property = {}, com
         <div class="value">${escapeHtml(property.address || invoice.propertyAddress || "--")}</div>
       </div>
 
-      <div class="box">
+      <div class="box print-card">
         <h2>Bill To</h2>
         <span class="label">Client Name</span>
         <div class="value">${escapeHtml(client.name || invoice.clientName || "--")}</div>
@@ -1128,7 +1194,7 @@ const buildPrintableInvoiceHtml = (invoice = {}, client = {}, property = {}, com
       </div>
     </div>
 
-    <div class="box">
+    <div class="box table-wrap">
       <h2>Line Items</h2>
       <table>
         <thead>
@@ -1151,7 +1217,7 @@ const buildPrintableInvoiceHtml = (invoice = {}, client = {}, property = {}, com
       </div>
     </div>
 
-    <div class="box" style="margin-top:18px;">
+    <div class="box print-card" style="margin-top:18px;">
       <h2>Payment Details</h2>
       <div class="detail-grid">
         <div>
@@ -1192,12 +1258,12 @@ const buildPrintableInvoiceHtml = (invoice = {}, client = {}, property = {}, com
     </div>
 
     ${invoice.notes ? `
-      <div class="box" style="margin-top:18px;">
+      <div class="box print-card" style="margin-top:18px;">
         <h2>Notes / Terms</h2>
         <div class="notes">${escapeHtml(invoice.notes)}</div>
       </div>
     ` : `
-      <div class="box" style="margin-top:18px;">
+      <div class="box print-card" style="margin-top:18px;">
         <h2>Notes / Terms</h2>
         <div class="notes">No additional notes or payment terms were entered for this invoice.</div>
       </div>
@@ -1260,30 +1326,89 @@ const buildPrintablePropertyHtml = (prop, readiness, sourcesUsed) => {
   <style>
     * { box-sizing: border-box; }
     html, body { margin:0; padding:0; background:#fff; color:#111; }
-    body { font-family: Arial, sans-serif; line-height:1.45; }
-    .page { max-width: 960px; margin: 0 auto; padding: 24px; }
+    body { font-family: Arial, sans-serif; line-height:1.5; }
+    .page { max-width: 960px; margin: 0 auto; padding: 26px; }
     h1, h2, h3 { margin:0 0 8px; color:#111; }
-    h1 { font-size: 24px; }
-    h2 { font-size: 18px; margin-bottom: 10px; }
+    h1 { font-size: 26px; line-height:1.15; }
+    h2 {
+      font-size: 14px;
+      margin-bottom: 10px;
+      text-transform: uppercase;
+      letter-spacing: .08em;
+      color:#1f2937;
+    }
     h3 { font-size: 15px; }
     p { margin:0; }
-    .muted { color:#555; }
-    .hero { display:flex; justify-content:space-between; align-items:flex-start; gap:16px; margin-bottom:18px; }
-    .hero-card { border:1px solid #d1d5db; border-radius:10px; padding:12px 14px; min-width:220px; }
+    .muted { color:#6b7280; }
+    .hero {
+      display:flex;
+      justify-content:space-between;
+      align-items:flex-start;
+      gap:16px;
+      margin-bottom:18px;
+      padding-bottom:16px;
+      border-bottom:2px solid #111827;
+    }
+    .hero-card {
+      border:1px solid #cbd5e1;
+      border-radius:12px;
+      padding:12px 14px;
+      min-width:220px;
+      background:#f8fafc;
+    }
     .summary-grid { width:100%; border-collapse:collapse; margin-top:14px; }
-    .summary-grid td { width:50%; border:1px solid #d1d5db; padding:8px 10px; vertical-align:top; }
-    .label { font-size:11px; font-weight:700; color:#555; text-transform:uppercase; letter-spacing:.04em; display:block; margin-bottom:2px; }
-    .section { margin-top:20px; }
+    .summary-grid td { width:50%; border:1px solid #d1d5db; padding:8px 10px; vertical-align:top; background:#fff; }
+    .label { font-size:10px; font-weight:700; color:#6b7280; text-transform:uppercase; letter-spacing:.08em; display:block; margin-bottom:3px; }
+    .section {
+      margin-top:20px;
+      border:1px solid #d1d5db;
+      border-radius:12px;
+      padding:14px;
+      background:linear-gradient(180deg, #ffffff 0%, #f8fafc 100%);
+      break-inside: avoid;
+      page-break-inside: avoid;
+    }
     table { width:100%; border-collapse:collapse; }
+    thead { display: table-header-group; }
+    tfoot { display: table-footer-group; }
     th, td { border:1px solid #d1d5db; padding:8px 10px; text-align:left; vertical-align:top; }
+    th {
+      background:#eef2f7;
+      color:#1f2937;
+      font-size:11px;
+      text-transform:uppercase;
+      letter-spacing:.06em;
+    }
+    tr { break-inside: avoid; page-break-inside: avoid; }
     ul { margin:8px 0 0 18px; padding:0; }
     li { margin:0 0 4px; }
-    .note-box { border:1px solid #d1d5db; padding:10px 12px; white-space:pre-wrap; }
+    .note-box {
+      border:1px solid #d1d5db;
+      border-radius:10px;
+      padding:10px 12px;
+      white-space:pre-wrap;
+      background:#fff;
+      break-inside: avoid;
+      page-break-inside: avoid;
+    }
     .status-grid { display:grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap:12px; margin-top:14px; }
-    .status-card { border:1px solid #d1d5db; border-radius:10px; padding:12px 14px; }
-    .status-value { font-size:24px; font-weight:700; margin-top:2px; }
+    .status-card {
+      border:1px solid #cbd5e1;
+      border-radius:12px;
+      padding:12px 14px;
+      background:#f8fafc;
+      break-inside: avoid;
+      page-break-inside: avoid;
+    }
+    .status-value { font-size:24px; font-weight:700; margin-top:2px; color:#111827; }
     .callout-grid { display:grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap:12px; margin-top:20px; }
-    .callout { border:1px solid #d1d5db; border-radius:10px; padding:12px 14px; }
+    .callout {
+      border:1px solid #d1d5db;
+      border-radius:12px;
+      padding:12px 14px;
+      break-inside: avoid;
+      page-break-inside: avoid;
+    }
     .callout.blocker { border-color:#ef4444; background:#fff5f5; }
     .callout.warning { border-color:#f59e0b; background:#fffaf0; }
     .no-print { margin-bottom:16px; }
@@ -1294,8 +1419,14 @@ const buildPrintablePropertyHtml = (prop, readiness, sourcesUsed) => {
     @page { margin: 0.6in; }
     @media print {
       body { background:#fff; }
+      body { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
       .page { max-width:none; padding:0; }
       .no-print { display:none; }
+      .hero, .hero-card, .summary-grid, .status-grid, .status-card, .callout-grid, .callout, .section, .note-box {
+        break-inside: avoid;
+        page-break-inside: avoid;
+      }
+      .section, .hero-card, .status-card { background:#fff; }
     }
   </style>
 </head>
@@ -4329,6 +4460,15 @@ function InvoicesTab({ invoices, props, clients, selectedInvoiceId, setSelectedI
     })
   }, [activeInvoice])
 
+  useEffect(() => {
+    if (!activeInvoice) return
+    const prev = document.body.style.overflow
+    document.body.style.overflow = "hidden"
+    return () => {
+      document.body.style.overflow = prev
+    }
+  }, [activeInvoice])
+
   const filteredInvoices = [...invoices]
     .filter(inv => {
       const client = clients.find(c=>c.id===inv.clientId)
@@ -4377,15 +4517,6 @@ function InvoicesTab({ invoices, props, clients, selectedInvoiceId, setSelectedI
     onDeleteInvoice(invoiceId)
   }
 
-  const exportInvoice = () => {
-    if (!activeInvoice || !editor || !onExportInvoice) return
-    onExportInvoice({
-      ...activeInvoice,
-      ...editor,
-      lineItems: editor.lineItems || activeInvoice.lineItems || []
-    })
-  }
-
   const totals = editor ? calcInvoiceTotals(editor) : { subtotal:0, tax:0, total:0 }
 
   return (
@@ -4418,7 +4549,7 @@ function InvoicesTab({ invoices, props, clients, selectedInvoiceId, setSelectedI
             : "No invoices match your current filters."}
         </div>
       ) : (
-        <div style={{display:"grid",gridTemplateColumns:isMobile?"1fr":(activeInvoice && canEdit ? "360px 1fr" : "1fr"),gap:12}}>
+        <div style={{display:"grid",gridTemplateColumns:"1fr",gap:12}}>
           <div style={{display:"flex",flexDirection:"column",gap:10}}>
             {filteredInvoices.map(inv=>{
               const job = props.find(p=>p.id===inv.propertyId)
@@ -4438,9 +4569,10 @@ function InvoicesTab({ invoices, props, clients, selectedInvoiceId, setSelectedI
                   </div>
                   <div style={{fontSize:11,color:"#9CA3AF",marginBottom:4}}>Subtotal {fmtMoney(t.subtotal)} | Tax {fmtMoney(t.tax)} | Total {fmtMoney(t.total)}</div>
                   <div style={{fontSize:11,color:"#6B7280",marginBottom:8}}>Created {fmt(inv.createdAt)}</div>
-                  {(canEdit || canDelete) && (
+                  {(canEdit || canDelete || !!onExportInvoice) && (
                     <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
                       {canEdit && <button onClick={()=>setSelectedInvoiceId(inv.id)} style={{...btnBlue,padding:"6px 10px"}}>Edit</button>}
+                      {onExportInvoice && <button onClick={()=>onExportInvoice(inv)} style={{...btnGray,padding:"6px 10px"}}>Export Invoice</button>}
                       {canDelete && <button onClick={()=>deleteInvoiceCard(inv.id, inv.invoiceId)} style={{...btnGray,padding:"6px 10px",border:"1px solid #EF4444",color:"#FCA5A5"}}>Delete</button>}
                     </div>
                   )}
@@ -4448,17 +4580,32 @@ function InvoicesTab({ invoices, props, clients, selectedInvoiceId, setSelectedI
               )
             })}
           </div>
+        </div>
+      )}
 
-          {activeInvoice && canEdit && editor && (
-            <div style={cardStyle}>
-              <div style={{display:"flex",justifyContent:"space-between",gap:10,marginBottom:12,flexWrap:"wrap"}}>
+      {activeInvoice && canEdit && editor && (
+        <>
+          <div
+            onClick={closeEditor}
+            style={{
+              position:"fixed",
+              inset:0,
+              background:"rgba(0,0,0,0.68)",
+              zIndex:390
+            }}
+          />
+          <div className="slide-in" style={{...getModalShellStyle(isMobile, isMobile ? 520 : 980)}}>
+            <div style={modalHeaderStyle}>
+              <div style={{display:"flex",justifyContent:"space-between",gap:12,alignItems:"flex-start",flexWrap:"wrap"}}>
                 <div>
-                  <div style={{fontSize:18,fontWeight:700,color:"#F9FAFB"}}>{activeInvoice.invoiceId}</div>
-                  <div style={{fontSize:12,color:"#9CA3AF"}}>{activeInvoice.propertyAddress} | {activeInvoice.clientName}</div>
+                  <div style={modalTitleStyle}>{activeInvoice.invoiceId}</div>
+                  <div style={modalSubtitleStyle}>{activeInvoice.propertyAddress} | {activeInvoice.clientName}</div>
                 </div>
-                <button onClick={closeEditor} style={btnGray}>Close</button>
+                <button onClick={closeEditor} style={{...btnGray,padding:"6px 10px",fontSize:12}}>Close</button>
               </div>
+            </div>
 
+            <div style={{padding:18,overflowY:"auto"}}>
               <div style={{fontSize:12,color:"#6B7280",marginBottom:8}}>Line Items</div>
               <div style={{display:"flex",flexDirection:"column",gap:8,marginBottom:10}}>
                 {(editor.lineItems || []).map(li=>(
@@ -4486,16 +4633,17 @@ function InvoicesTab({ invoices, props, clients, selectedInvoiceId, setSelectedI
                 </div>
               </div>
 
-              <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
-                <button onClick={exportInvoice} style={btnGray}>Export Invoice</button>
+              <div style={{display:"flex",gap:8,flexWrap:"wrap",marginBottom:8}}>
                 <button onClick={()=>submitInvoiceAction("Draft")} style={btnBlue}>Save Draft</button>
                 <button onClick={()=>submitInvoiceAction("Sent")} style={btnOrange}>Mark Sent</button>
                 <button onClick={()=>submitInvoiceAction("Paid")} style={btnGreen}>Mark Paid</button>
+              </div>
+              <div style={{display:"flex",justifyContent:"flex-start"}}>
                 <button onClick={()=>submitInvoiceAction("Cancelled")} style={{...btnGray,border:"1px solid #EF4444",color:"#FCA5A5"}}>Cancel Invoice</button>
               </div>
             </div>
-          )}
-        </div>
+          </div>
+        </>
       )}
     </div>
   )
