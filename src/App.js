@@ -3500,12 +3500,9 @@ export default function JLCMSApp() {
       {/* == DASHBOARD == */}
       {tab==="dashboard"&&(can("dashboard","view") ? (
         <div style={{
-            display: isMobile ? "block" : "flex",
-            height: isMobile ? "auto" : "calc(100vh - 52px)"
-          }}>
-          <div style={{
-            display: isMobile ? "block" : "flex",
-            height: isMobile ? "auto" : "calc(100vh - 52px)"
+            display:"flex",
+            flexDirection:"column",
+            minHeight:isMobile ? "auto" : "calc(100vh - 52px)"
           }}>
             {bulkOpen&&<BulkImportModal onClose={()=>setBulkOpen(false)} vendors={vendors} onImport={(rows)=>{ setProps(prev=>[...rows.map(normalizeProp),...prev]); setBulkOpen(false); fireNotif("job",`${rows.length} Job Orders Imported`,`Bulk import complete - ${rows.length} properties added`,[]) }}/>}
 
@@ -3605,7 +3602,9 @@ export default function JLCMSApp() {
               display:"grid",
               gridTemplateColumns: isMobile ? "1fr" : "repeat(auto-fit,minmax(340px,1fr))",
               gap:12,
-              alignContent:"start"
+              alignContent:"start",
+              flex:1,
+              overflowY:isMobile ? "visible" : "auto"
             }}>
 
               {dashboardProps.length === 0 && (
@@ -3757,7 +3756,6 @@ export default function JLCMSApp() {
                 {readyDashboardProps.map(p=><span key={p.id} style={{background:"#022C16",border:"1px solid #34D399",borderRadius:4,padding:"3px 10px",fontSize:12,color:"#6EE7B7"}}>{p.address}</span>)}
               </div>
             )}
-          </div>
 
 
           {selProp && (
