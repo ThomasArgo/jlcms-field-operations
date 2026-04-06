@@ -283,6 +283,14 @@ const QUICK_REFERENCE_ITEMS = [
   { label:"TCEQ UST Database", value:"tceq.texas.gov", href:"https://www.tceq.texas.gov" }
 ]
 const QUICK_REFERENCE_FOOTER = "HCG Management LLC | Honesty Construction Group | Houston, TX | TIPS-Awarded Public Works Contractor"
+const TODAY_FOCUS_PRESETS = [
+  "Keep permit statuses current, clear readiness blockers, and route team updates through chat.",
+  "Close open compliance gaps on active jobs before scheduling new field mobilizations.",
+  "Confirm utility disconnects and required documents before marking jobs ready to mobilize.",
+  "Review due tasks, update schedule assignments, and keep client-linked jobs moving cleanly.",
+  "Focus on permit follow-up, readiness sign-offs, and clear field handoffs for the team.",
+  "Verify job details early, remove blockers fast, and keep invoice-ready work documented."
+]
 const COMPLIANCE_GROUPS = [
   {
     key:"identification",
@@ -1488,6 +1496,11 @@ const pageShell = (desktopMax = 1120) => {
     margin: "0 auto"
   }
 }
+const getDailyTodayFocus = (dateValue = getTodayDateInput()) => {
+  const normalized = normalizeDateInput(dateValue) || getTodayDateInput()
+  const seed = normalized.replace(/-/g, "").split("").reduce((sum, digit) => sum + Number(digit || 0), 0)
+  return TODAY_FOCUS_PRESETS[seed % TODAY_FOCUS_PRESETS.length]
+}
 
 const FIXED_TEAM_ID = "team-main"
 const FIXED_TEAM_NAME = HCG_WORKSPACE_NAME
@@ -1515,7 +1528,8 @@ const buildSingleCompanyAuthState = (storedUsers = [], storedTeams = []) => {
       role:u.role||"member",
       activeSessionId:u.activeSessionId||null,
       approved:u.approved !== false,
-      mustResetPassword: !!u.mustResetPassword
+      mustResetPassword: !!u.mustResetPassword,
+      passwordResetSource: String(u.passwordResetSource || "").trim()
     }))
   const resolvedTeamName = String(storedMainTeam?.teamName || FIXED_TEAM_NAME).trim() || FIXED_TEAM_NAME
   const resolvedInviteCode = String(storedMainTeam?.inviteCode || "").trim() || (baseUsers.length ? generateInviteCode() : DEFAULT_INVITE_CODE)
@@ -1533,6 +1547,7 @@ const buildSingleCompanyAuthState = (storedUsers = [], storedTeams = []) => {
     teamId:FIXED_TEAM_ID,
     teamName:resolvedTeamName,
     inviteCode:resolvedInviteCode,
+    todayFocusCustom: String(storedMainTeam?.todayFocusCustom || "").trim(),
     ...normalizeCompanySettings(storedMainTeam),
     members:[...new Set(members)],
     pendingRequests,
@@ -2107,12 +2122,14 @@ export default function JLCMSApp() {
       activeSessionId:sessionId,
       lastLoginAt:loginAt,
       role:"ceo",
-      mustResetPassword:true
+      mustResetPassword:false,
+      passwordResetSource:""
     }
     const nextTeam = {
       teamId:FIXED_TEAM_ID,
       teamName:FIXED_TEAM_NAME,
       inviteCode,
+      todayFocusCustom:"",
       ...DEFAULT_COMPANY_SETTINGS,
       members:[nextUser.id],
       pendingRequests:[],
@@ -2246,7 +2263,8 @@ export default function JLCMSApp() {
       email:nextEmail,
       profilePic:nextPhoto,
       password:nextPassword,
-      mustResetPassword: !!mustResetPassword
+      mustResetPassword: !!mustResetPassword,
+      passwordResetSource: passwordChanged ? "" : String(u.passwordResetSource || "").trim()
     }))
     return { ok:true }
   }
@@ -2264,7 +2282,8 @@ export default function JLCMSApp() {
     setUsers(prev=>prev.map(u=>u.id!==userIdValue ? u : {
       ...u,
       password,
-      mustResetPassword:true
+      mustResetPassword:true,
+      passwordResetSource:"admin_reset"
     }))
     return { ok:true }
   }, [currentUser?.role, currentUser?.teamId, users])
@@ -2279,12 +2298,14 @@ export default function JLCMSApp() {
     setUsers(prev=>prev.map(u=>u.id!==currentUser.id ? u : {
       ...u,
       password,
-      mustResetPassword:false
+      mustResetPassword:false,
+      passwordResetSource:""
     }))
     setCurrentUser(prev=>prev ? {
       ...prev,
       password,
-      mustResetPassword:false
+      mustResetPassword:false,
+      passwordResetSource:""
     } : prev)
     return { ok:true }
   }, [currentUser?.id])
@@ -2344,6 +2365,12 @@ export default function JLCMSApp() {
       nextSettings[key] = cleanValue || DEFAULT_COMPANY_SETTINGS[key]
     })
     setTeams(prev=>prev.map(t=>t.teamId!==FIXED_TEAM_ID ? t : { ...t, ...normalizeCompanySettings(t), ...nextSettings }))
+    return { ok:true }
+  }
+  const updateTodayFocus = (value) => {
+    if (!isCurrentCeo) return { ok:false, error:"Only the CEO can update Today's Focus." }
+    const clean = String(value || "").trim()
+    setTeams(prev=>prev.map(t=>t.teamId!==FIXED_TEAM_ID ? t : { ...t, todayFocusCustom:clean }))
     return { ok:true }
   }
 
@@ -2613,6 +2640,7 @@ export default function JLCMSApp() {
   const selProp = props.find(p=>p.id===selected)
   const clientMap = Object.fromEntries(clients.map(c=>[c.id, c]))
   const currentTeam = currentUser ? teams.find(t=>t.teamId===currentUser.teamId) : null
+  const todayFocusMessage = String(currentTeam?.todayFocusCustom || "").trim() || getDailyTodayFocus(getTodayDateInput())
   const teamUsers = users.filter(u=>u.teamId===currentUser?.teamId && u.approved)
   const isCurrentAdmin = currentUser ? ["admin","ceo","management"].includes((currentUser.role||"").toLowerCase()) : false
   const isCurrentCeo = currentUser ? (currentUser.role||"").toLowerCase()==="ceo" : false
@@ -3462,12 +3490,12 @@ export default function JLCMSApp() {
       )}
 
       {/* ========================== TAB ROUTING (HOME / CLIENTS / MORE) ========================== */}
-      {tab==="home" && <HomeTab props={props} invoices={invoices} billingCounts={billingCounts} setTab={setTab} currentUser={currentUser} />}
+      {tab==="home" && <HomeTab props={props} invoices={invoices} billingCounts={billingCounts} setTab={setTab} currentUser={currentUser} todayFocus={todayFocusMessage} />}
       {tab==="chat" && (can("chat","view") ? <ChatTab currentUser={currentUser} users={users} messages={messages} setMessages={setMessages} modePref={chatModePref} peerPref={chatPeerPref} onModePrefApplied={()=>{ setChatModePref("team"); setChatPeerPref("") }} onImmediateOneTimeAlert={notifyCurrentUserOneTimeEvent} /> : <AccessDenied page="Chat" />)}
       {tab==="team" && (can("team","view") ? <TeamTab currentUser={currentUser} currentTeam={currentTeam} users={users} onMessage={openPrivateMessage} canManageUsers={can("team","edit")} canResetPasswords={can("team","edit") && ["ceo","admin"].includes((currentUser?.role||"").toLowerCase())} isCurrentCeo={isCurrentCeo} onAssignUserRole={assignUserRole} onForceLogoutUser={forceLogoutTeamUser} onRemoveUser={removeTeamUser} onOpenResetPasswordModal={openResetPasswordModal} /> : <AccessDenied page="Team" />)}
       {tab==="clients" && (can("clients","view") ? <ClientsTab clients={clients} setClients={setClients} props={props} setProps={setProps} canAdd={can("clients","add")} canEdit={can("clients","edit")} canDelete={can("clients","delete")} /> : <AccessDenied page="Clients" />)}
       {tab==="invoices" && (can("invoices","view") ? <InvoicesTab invoices={invoices} props={props} clients={clients} selectedInvoiceId={selectedInvoiceId} setSelectedInvoiceId={setSelectedInvoiceId} onUpdateInvoice={updateInvoice} onDeleteInvoice={deleteInvoice} onExportInvoice={exportInvoicePacket} canAdd={can("invoices","add")} canEdit={can("invoices","edit")} canDelete={can("invoices","delete")} /> : <AccessDenied page="Invoices" />)}
-      {tab==="more" && (can("more","view") ? <MoreTab currentUser={currentUser} currentTeam={currentTeam} users={users} isCurrentAdmin={isCurrentAdmin} isCurrentCeo={isCurrentCeo} canResetPasswords={can("team","edit") && ["ceo","admin"].includes((currentUser?.role||"").toLowerCase())} onApprove={approveTeamRequest} onDeny={denyTeamRequest} onUpdateInviteCode={updateTeamInviteCode} onForceLogoutUser={forceLogoutTeamUser} onRemoveUser={removeTeamUser} onOpenResetPasswordModal={openResetPasswordModal} onUpdateProfile={updateCurrentProfile} onUpdateCompanyName={updateCompanyName} onUpdateCompanySettings={updateCompanySettings} onCreateTeamRole={createTeamRole} onRenameTeamRole={renameTeamRole} onDeleteTeamRole={deleteTeamRole} onAssignUserRole={assignUserRole} onUpdateRolePermission={updateRolePermission} onExportData={exportAllData} onImportData={importAllData} lastSavedAt={lastSavedAt} onLogout={logout} /> : <AccessDenied page="More" />)}
+      {tab==="more" && (can("more","view") ? <MoreTab currentUser={currentUser} currentTeam={currentTeam} users={users} isCurrentAdmin={isCurrentAdmin} isCurrentCeo={isCurrentCeo} canResetPasswords={can("team","edit") && ["ceo","admin"].includes((currentUser?.role||"").toLowerCase())} onApprove={approveTeamRequest} onDeny={denyTeamRequest} onUpdateInviteCode={updateTeamInviteCode} onForceLogoutUser={forceLogoutTeamUser} onRemoveUser={removeTeamUser} onOpenResetPasswordModal={openResetPasswordModal} onUpdateProfile={updateCurrentProfile} onUpdateCompanyName={updateCompanyName} onUpdateCompanySettings={updateCompanySettings} onUpdateTodayFocus={updateTodayFocus} onCreateTeamRole={createTeamRole} onRenameTeamRole={renameTeamRole} onDeleteTeamRole={deleteTeamRole} onAssignUserRole={assignUserRole} onUpdateRolePermission={updateRolePermission} onExportData={exportAllData} onImportData={importAllData} lastSavedAt={lastSavedAt} onLogout={logout} /> : <AccessDenied page="More" />)}
 
       {/* == DASHBOARD == */}
       {tab==="dashboard"&&(can("dashboard","view") ? (
@@ -3901,7 +3929,7 @@ export default function JLCMSApp() {
       }
 
 /* ========================== HOME TAB (SYSTEM STYLE) ========================== */
-function HomeTab({ props, invoices, billingCounts, setTab, currentUser }) {
+function HomeTab({ props, invoices, billingCounts, setTab, currentUser, todayFocus }) {
   const { isPhone: isMobile, isTablet } = viewportInfo()
 
   const ready = props.filter(p =>
@@ -3924,7 +3952,7 @@ function HomeTab({ props, invoices, billingCounts, setTab, currentUser }) {
       <div style={{...cardStyle,marginBottom:16,background:"linear-gradient(135deg,#111827 0%,#0F172A 100%)",border:"1px solid #253043"}}>
         <div style={{fontSize:14,color:"#D1D5DB",marginBottom:6}}>Today Focus</div>
         <div style={{fontSize:12,color:"#9CA3AF",lineHeight:1.5}}>
-          Keep permit statuses current, clear readiness blockers, and route team updates through chat.
+          {todayFocus || getDailyTodayFocus(getTodayDateInput())}
         </div>
       </div>
 
@@ -4991,6 +5019,7 @@ function ForcedPasswordResetScreen({ currentUser, onSubmit, onLogout }) {
   const [password, setPassword] = useState("")
   const [confirmPassword, setConfirmPassword] = useState("")
   const [error, setError] = useState("")
+  const isAdminReset = String(currentUser?.passwordResetSource || "").toLowerCase() === "admin_reset"
 
   const save = () => {
     setError("")
@@ -5004,7 +5033,9 @@ function ForcedPasswordResetScreen({ currentUser, onSubmit, onLogout }) {
         <div style={modalHeaderStyle}>
           <div style={{...modalTitleStyle,fontSize:isMobile ? 24 : 28}}>Change Temporary Password</div>
           <div style={{...modalSubtitleStyle,marginTop:6}}>
-            Your password was reset by HCG administration. Set a new password before continuing into the workspace.
+            {isAdminReset
+              ? "Your password was reset by an administrator. Please create a new password to continue."
+              : "Create a new password before continuing into the workspace."}
           </div>
         </div>
         <div style={{padding:20,overflowY:"auto"}}>
@@ -5044,13 +5075,14 @@ function ForcedPasswordResetScreen({ currentUser, onSubmit, onLogout }) {
 }
 
 /* ========================== MORE TAB ========================== */
-function MoreTab({ currentUser, currentTeam, users, isCurrentAdmin, isCurrentCeo, canResetPasswords=false, onApprove, onDeny, onUpdateInviteCode, onForceLogoutUser, onRemoveUser, onOpenResetPasswordModal, onUpdateProfile, onUpdateCompanyName, onUpdateCompanySettings, onCreateTeamRole, onRenameTeamRole, onDeleteTeamRole, onAssignUserRole, onUpdateRolePermission, onExportData, onImportData, lastSavedAt, onLogout }) {
+function MoreTab({ currentUser, currentTeam, users, isCurrentAdmin, isCurrentCeo, canResetPasswords=false, onApprove, onDeny, onUpdateInviteCode, onForceLogoutUser, onRemoveUser, onOpenResetPasswordModal, onUpdateProfile, onUpdateCompanyName, onUpdateCompanySettings, onUpdateTodayFocus, onCreateTeamRole, onRenameTeamRole, onDeleteTeamRole, onAssignUserRole, onUpdateRolePermission, onExportData, onImportData, lastSavedAt, onLogout }) {
   const { isPhone: isMobile } = viewportInfo()
   const pending = currentTeam?.pendingRequests || []
   const [inviteInput, setInviteInput] = useState(currentTeam?.inviteCode || "")
   const [settingsMsg, setSettingsMsg] = useState("")
   const [companyNameInput, setCompanyNameInput] = useState(currentTeam?.teamName || "")
   const [companySettingsForm, setCompanySettingsForm] = useState(normalizeCompanySettings(currentTeam))
+  const [todayFocusInput, setTodayFocusInput] = useState(currentTeam?.todayFocusCustom || "")
   const [newRole, setNewRole] = useState("")
   const [editingRole, setEditingRole] = useState("")
   const [roleNameInput, setRoleNameInput] = useState("")
@@ -5081,6 +5113,7 @@ function MoreTab({ currentUser, currentTeam, users, isCurrentAdmin, isCurrentCeo
     setInviteInput(currentTeam?.inviteCode || "")
     setCompanyNameInput(currentTeam?.teamName || "")
     setCompanySettingsForm(normalizeCompanySettings(currentTeam))
+    setTodayFocusInput(currentTeam?.todayFocusCustom || "")
   }, [currentTeam])
 
   useEffect(() => {
@@ -5175,6 +5208,15 @@ function MoreTab({ currentUser, currentTeam, users, isCurrentAdmin, isCurrentCeo
   const saveCompanySettings = () => {
     const res = onUpdateCompanySettings(companySettingsForm)
     setSettingsMsg(res.ok ? "Billing and remittance settings updated." : (res.error || "Unable to update billing settings."))
+  }
+  const saveTodayFocus = () => {
+    const res = onUpdateTodayFocus(todayFocusInput)
+    setSettingsMsg(res.ok ? "Today's Focus updated." : (res.error || "Unable to update Today's Focus."))
+  }
+  const clearTodayFocus = () => {
+    setTodayFocusInput("")
+    const res = onUpdateTodayFocus("")
+    setSettingsMsg(res.ok ? "Today's Focus reverted to the daily auto-generated message." : (res.error || "Unable to clear Today's Focus."))
   }
   const createRole = () => {
     const res = onCreateTeamRole(newRole)
@@ -5385,6 +5427,29 @@ function MoreTab({ currentUser, currentTeam, users, isCurrentAdmin, isCurrentCeo
             <div style={{display:"flex",alignItems:"flex-end"}}><button onClick={saveInviteCode} style={btnBlue}>Update Code</button></div>
             <div><Label>Company Name</Label><input value={companyNameInput} onChange={e=>setCompanyNameInput(e.target.value)} style={iStyle} /></div>
             <div style={{display:"flex",alignItems:"flex-end"}}><button onClick={saveCompanyName} style={btnBlue}>Update Company</button></div>
+          </div>
+
+          <div style={{borderTop:"1px solid #1F2937",paddingTop:10,marginTop:8,marginBottom:10}}>
+            <div style={{fontSize:12,color:"#6B7280",marginBottom:8}}>Dashboard Focus</div>
+            <div style={{display:"grid",gridTemplateColumns:"1fr",gap:10}}>
+              <div>
+                <Label>Today's Focus Override</Label>
+                <textarea
+                  value={todayFocusInput}
+                  onChange={e=>setTodayFocusInput(e.target.value)}
+                  rows={3}
+                  placeholder="Optional custom focus message for all users"
+                  style={{...iStyle,resize:"vertical",lineHeight:1.5}}
+                />
+                <div style={{fontSize:11,color:"#6B7280",marginTop:6,lineHeight:1.5}}>
+                  Leave blank to use the automatically rotating daily focus message.
+                </div>
+              </div>
+              <div style={{display:"flex",justifyContent:"flex-end",gap:8,flexWrap:"wrap"}}>
+                <button onClick={clearTodayFocus} style={btnGray}>Clear Custom Focus</button>
+                <button onClick={saveTodayFocus} style={btnBlue}>Save Today's Focus</button>
+              </div>
+            </div>
           </div>
 
           <div style={{borderTop:"1px solid #1F2937",paddingTop:10,marginTop:8,marginBottom:10}}>
@@ -5811,19 +5876,29 @@ function ScheduleTab({ activeUser, currentUser, teamUsers = [], recurringWeeklyS
           {canManageTasks && (
             <div style={{background:"#111827",border:"1px solid #1F2937",borderRadius:8,padding:sectionPad,marginBottom:sectionMargin}}>
               <div style={{fontFamily:"'Barlow Condensed',sans-serif",fontWeight:900,fontSize:16,color:"#34D399",letterSpacing:1,marginBottom:8}}>TASK ASSIGNMENT</div>
-              <div style={{display:"grid",gridTemplateColumns:isMobile?"1fr":"1.6fr 1fr 1fr 1fr 1fr 1fr 1fr",gap:sectionGap,marginBottom:sectionGap}}>
+              <div style={{display:"grid",gridTemplateColumns:isMobile?"1fr":"1.8fr 1.2fr",gap:sectionGap,marginBottom:sectionGap}}>
                 <input value={taskForm.title} onChange={e=>setTaskForm(f=>({...f,title:e.target.value}))} placeholder="Task title" style={iStyle} />
+                <textarea
+                  value={taskForm.detail}
+                  onChange={e=>setTaskForm(f=>({...f,detail:e.target.value}))}
+                  placeholder="Task detail"
+                  rows={isMobile ? 3 : 2}
+                  style={{...iStyle,resize:"vertical",lineHeight:1.45}}
+                />
+              </div>
+              <div style={{display:"grid",gridTemplateColumns:isMobile?"1fr":"repeat(5,minmax(0,1fr))",gap:sectionGap,marginBottom:sectionGap}}>
                 <select value={taskForm.assignedUserId} onChange={e=>setTaskForm(f=>({...f,assignedUserId:e.target.value}))} style={iStyle}><option value="">Assign User</option>{teamUsers.map(u=><option key={u.id} value={u.id}>{u.name}</option>)}</select>
                 <input type="date" value={taskForm.dueDate} onChange={e=>setTaskForm(f=>({...f,dueDate:e.target.value}))} style={iStyle} />
                 <input type="time" value={taskForm.dueTime} onChange={e=>setTaskForm(f=>({...f,dueTime:e.target.value}))} style={iStyle} />
                 <select value={taskForm.priority} onChange={e=>setTaskForm(f=>({...f,priority:e.target.value}))} style={iStyle}>{["Low","Normal","High","Urgent"].map(p=><option key={p}>{p}</option>)}</select>
                 <select value={taskForm.status} onChange={e=>setTaskForm(f=>({...f,status:e.target.value}))} style={iStyle}>{["To Do","In Progress","Done"].map(s=><option key={s}>{s}</option>)}</select>
-                <button onClick={saveTask} style={btnGreen}>{taskEditId ? "Save" : "Add"}</button>
               </div>
-              <div style={{display:"grid",gridTemplateColumns:isMobile?"1fr":"2fr 1fr 1fr",gap:sectionGap}}>
-                <input value={taskForm.detail} onChange={e=>setTaskForm(f=>({...f,detail:e.target.value}))} placeholder="Task detail" style={iStyle} />
+              <div style={{display:"grid",gridTemplateColumns:isMobile?"1fr":"1fr 1fr",gap:sectionGap,marginBottom:sectionGap}}>
                 <select value={taskForm.propertyId} onChange={e=>setTaskForm(f=>({...f,propertyId:e.target.value}))} style={iStyle}><option value="">Link Job (optional)</option>{properties.map(p=><option key={p.id} value={p.id}>{p.address}</option>)}</select>
                 <select value={taskForm.clientId} onChange={e=>setTaskForm(f=>({...f,clientId:e.target.value}))} style={iStyle}><option value="">Link Client (optional)</option>{clients.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}</select>
+              </div>
+              <div style={{display:"flex",justifyContent:"flex-end"}}>
+                <button onClick={saveTask} style={btnGreen}>{taskEditId ? "Save" : "Add"}</button>
               </div>
             </div>
           )}
