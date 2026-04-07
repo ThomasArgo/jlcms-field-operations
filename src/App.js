@@ -673,7 +673,6 @@ const DOCUMENT_DB_VERSION = 1
 const DOCUMENT_STORE_NAME = "documentPayloads"
 const MAX_DOCUMENT_PERSIST_BYTES = 10 * 1024 * 1024
 const STORAGE_ERROR_COOLDOWN_MS = 4000
-const ONE_TIME_NOTIFICATION_STORAGE_KEY = "hcg-one-time-notification-ledger"
 const storageErrorTimestamps = new Map()
 const normalizeDocumentRecord = (doc = {}) => ({
   id: doc.id || uid(),
@@ -698,19 +697,6 @@ const normalizePhotoRecord = (photo = {}) => ({
 })
 const getPhotoDisplayName = (photo = {}) =>
   String(photo.displayName || photo.name || "Photo").trim() || "Photo"
-const stripDocumentPayloadsFromProps = (propList = []) =>
-  (propList || []).map(prop => normalizeProp({
-    ...prop,
-    documents: (prop.documents || []).map(doc => {
-      const normalizedDoc = normalizeDocumentRecord(doc)
-      return {
-        ...normalizedDoc,
-        data: "",
-        dataStored: normalizedDoc.dataStored || !!normalizedDoc.data,
-        storageKind: normalizedDoc.dataStored || normalizedDoc.storageKind ? (normalizedDoc.storageKind || "indexeddb") : normalizedDoc.storageKind
-      }
-    })
-  }))
 const reportStorageFailure = (message, error) => {
   const text = String(message || "Local storage failed.")
   const lastShown = storageErrorTimestamps.get(text) || 0
@@ -718,19 +704,6 @@ const reportStorageFailure = (message, error) => {
   storageErrorTimestamps.set(text, Date.now())
   console.error(text, error)
   if (typeof window !== "undefined" && typeof window.alert === "function") window.alert(text)
-}
-const loadOneTimeNotificationLedger = () => {
-  return {}
-}
-const saveOneTimeNotificationLedger = (ledger = {}) => {
-  return ledger
-}
-const getPropsStorageFailureMessage = (error) => {
-  const errorText = String(error?.message || error || "")
-  if (/quota|storage|space/i.test(errorText)) {
-    return "Document could not be saved locally because storage limit was reached."
-  }
-  return "Local property data could not be saved. Recent document changes may not persist after refresh."
 }
 const getDocumentTooLargeMessage = (fileName = "") =>
   `${fileName || "This file"} is too large for local document storage. Files must be 10 MB or smaller.`
@@ -788,26 +761,6 @@ const getAllDocumentPayloads = async () => {
     tx.onerror = () => {
       db.close()
       reject(tx.error || new Error("Unable to read saved documents."))
-    }
-  })
-}
-const deleteDocumentPayload = async (documentId) => {
-  if (!documentId) return
-  const db = await openDocumentDb()
-  return new Promise((resolve, reject) => {
-    const tx = db.transaction(DOCUMENT_STORE_NAME, "readwrite")
-    const store = tx.objectStore(DOCUMENT_STORE_NAME)
-    const request = store.delete(documentId)
-    request.onsuccess = () => resolve(true)
-    request.onerror = () => reject(request.error || tx.error || new Error("Unable to remove saved document payload."))
-    tx.oncomplete = () => db.close()
-    tx.onerror = () => {
-      db.close()
-      reject(tx.error || new Error("Unable to remove saved document payload."))
-    }
-    tx.onabort = () => {
-      db.close()
-      reject(tx.error || new Error("Unable to remove saved document payload."))
     }
   })
 }
@@ -2340,11 +2293,6 @@ export default function JLCMSApp() {
       console.error("Supabase team settings sync failed.", error)
     })
   }, [authLoaded, teams])
-  useEffect(() => {
-    saveOneTimeNotificationLedger(shownOneTimeNotifications)
-  }, [shownOneTimeNotifications])
-
-
   /* ---- Tick every 30s ---- */
   useEffect(()=>{ const t = setInterval(()=>setTick(x=>x+1), 30000); return()=>clearInterval(t) },[])
   useEffect(() => {
