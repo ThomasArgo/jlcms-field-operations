@@ -1,4 +1,35 @@
 import { useState, useEffect, useRef, useCallback } from "react"
+import { getTeams } from "./services/teams"
+import {
+  getClients as fetchClientsFromSupabase,
+  createClientRecord,
+  updateClientRecord,
+  deleteClientRecord
+} from "./services/clients"
+import {
+  getVendors as fetchVendorsFromSupabase,
+  createVendor,
+  updateVendor,
+  deleteVendor
+} from "./services/vendors"
+import {
+  getInspectors as fetchInspectorsFromSupabase,
+  createInspector,
+  updateInspector,
+  deleteInspector
+} from "./services/inspectors"
+import {
+  createProperty as createSupabaseProperty,
+  updateProperty as updateSupabaseProperty,
+  deleteProperty as deleteSupabaseProperty
+} from "./services/properties"
+import {
+  createUser as createSupabaseUser,
+  updateUser as updateSupabaseUser,
+  deleteUser as deleteSupabaseUser
+} from "./services/users"
+import { getOrCreateWorkspaceTeam, syncWorkspaceTeam } from "./services/workspace"
+import { getWorkspaceState, saveWorkspaceState } from "./services/workspaceState"
 
 function useIsMobile() {
   const [isMobile, setIsMobile] = useState(window.innerWidth < 768)
@@ -689,18 +720,10 @@ const reportStorageFailure = (message, error) => {
   if (typeof window !== "undefined" && typeof window.alert === "function") window.alert(text)
 }
 const loadOneTimeNotificationLedger = () => {
-  try {
-    return safeParseJSON(localStorage.getItem(ONE_TIME_NOTIFICATION_STORAGE_KEY), {})
-  } catch (error) {
-    return {}
-  }
+  return {}
 }
 const saveOneTimeNotificationLedger = (ledger = {}) => {
-  try {
-    localStorage.setItem(ONE_TIME_NOTIFICATION_STORAGE_KEY, JSON.stringify(ledger || {}))
-  } catch (error) {
-    console.error("Unable to save one-time notification ledger.", error)
-  }
+  return ledger
 }
 const getPropsStorageFailureMessage = (error) => {
   const errorText = String(error?.message || error || "")
@@ -1535,13 +1558,54 @@ const buildPrintablePropertyHtml = (prop, readiness, sourcesUsed) => {
 
 
 function timeToday(timeStr) {
-  const [time, ampm] = timeStr.split(" ")
-  let [h, m] = time.split(":").map(Number)
-  if (ampm === "PM" && h !== 12) h += 12
-  if (ampm === "AM" && h === 12) h = 0
+  const parsed = parseTimeValue(timeStr)
   const d = new Date()
-  d.setHours(h, m, 0, 0)
+  d.setHours(parsed?.hour24 ?? 0, parsed?.minute ?? 0, 0, 0)
   return d
+}
+
+function parseTimeValue(timeStr) {
+  const raw = String(timeStr || "").trim()
+  if (!raw) return null
+
+  const twelveHourMatch = raw.match(/^(\d{1,2}):(\d{2})\s*(AM|PM)$/i)
+  if (twelveHourMatch) {
+    let hour = Number(twelveHourMatch[1])
+    const minute = Number(twelveHourMatch[2])
+    const period = twelveHourMatch[3].toUpperCase()
+    if (!Number.isFinite(hour) || !Number.isFinite(minute) || hour < 1 || hour > 12 || minute < 0 || minute > 59) return null
+    if (period === "PM" && hour !== 12) hour += 12
+    if (period === "AM" && hour === 12) hour = 0
+    return { hour24: hour, minute }
+  }
+
+  const twentyFourHourMatch = raw.match(/^(\d{1,2}):(\d{2})$/)
+  if (twentyFourHourMatch) {
+    const hour = Number(twentyFourHourMatch[1])
+    const minute = Number(twentyFourHourMatch[2])
+    if (!Number.isFinite(hour) || !Number.isFinite(minute) || hour < 0 || hour > 23 || minute < 0 || minute > 59) return null
+    return { hour24: hour, minute }
+  }
+
+  return null
+}
+
+function formatTime12Hour(timeStr) {
+  const parsed = parseTimeValue(timeStr)
+  if (!parsed) return ""
+  const period = parsed.hour24 >= 12 ? "PM" : "AM"
+  const hour12 = parsed.hour24 % 12 || 12
+  return `${String(hour12).padStart(2, "0")}:${String(parsed.minute).padStart(2, "0")} ${period}`
+}
+
+function formatTime24Hour(timeStr) {
+  const parsed = parseTimeValue(timeStr)
+  if (!parsed) return ""
+  return `${String(parsed.hour24).padStart(2, "0")}:${String(parsed.minute).padStart(2, "0")}`
+}
+
+function displayTimeValue(timeStr) {
+  return formatTime12Hour(timeStr) || String(timeStr || "")
 }
 
 
@@ -1553,60 +1617,90 @@ function genCode(name, trade, index) {
 }
 
 
-async function storageSave(key, val) {
-  const payload = key === "hcg-props" ? stripDocumentPayloadsFromProps(val) : val
-  let serialized = ""
-  try {
-    serialized = JSON.stringify(payload)
-  } catch (error) {
-    reportStorageFailure(key === "hcg-props" ? getPropsStorageFailureMessage(error) : `Local save failed for ${key}.`, error)
-    return { ok:false, error }
+const buildWorkspaceSnapshotPayload = ({
+  props = [],
+  mileage = [],
+  invoices = [],
+  tasks = [],
+  oneOffScheduleBlocks = [],
+  recurringWeeklySchedule = [],
+  users = [],
+  teams = [],
+  messages = [],
+  currentUser = null,
+  notifications = [],
+  shownOneTimeNotifications = {},
+  lastSavedAt = ""
+} = {}) => ({
+  props: (props || []).map(normalizeProp),
+  mileage: (mileage || []).map(normalizeMileageEntry),
+  invoices: Array.isArray(invoices) ? invoices : [],
+  tasks: Array.isArray(tasks) ? tasks : [],
+  oneOffScheduleBlocks: Array.isArray(oneOffScheduleBlocks) ? oneOffScheduleBlocks : [],
+  recurringWeeklySchedule: Array.isArray(recurringWeeklySchedule) ? recurringWeeklySchedule : [],
+  users: Array.isArray(users) ? users : [],
+  teams: Array.isArray(teams) ? teams : [],
+  messages: Array.isArray(messages) ? messages : [],
+  currentUser: currentUser || null,
+  notifications: Array.isArray(notifications) ? notifications.slice(0, 100) : [],
+  shownOneTimeNotifications: shownOneTimeNotifications || {},
+  lastSavedAt: String(lastSavedAt || "").trim()
+})
+const toSupabaseUserPayload = (user, teamId) => ({
+  team_id: teamId,
+  legacy_user_id: user.id,
+  name: user.name,
+  email: user.email,
+  role: user.role || "member",
+  approved: user.approved !== false,
+  profile_pic: user.profilePic || "",
+  active_session_id: user.activeSessionId || null,
+  last_login_at: user.lastLoginAt || null,
+  must_reset_password: !!user.mustResetPassword,
+  password_reset_source: String(user.passwordResetSource || "").trim(),
+  metadata: {
+    password: String(user.password || ""),
+    createdAt: user.createdAt || now()
   }
-  try {
-    await window.storage?.set?.(key, serialized)
-  } catch (error) {
-    console.error(`window.storage save failed for ${key}`, error)
-  }
-  try {
-    localStorage.setItem(key, serialized)
-    localStorage.setItem("hcg-sync-ts", String(Date.now()))
-    localStorage.setItem("hcg-last-saved-at", now())
-    return { ok:true }
-  } catch(error) {
-    reportStorageFailure(key === "hcg-props" ? getPropsStorageFailureMessage(error) : `Local save failed for ${key}.`, error)
-    return { ok:false, error }
-  }
-}
-async function storageLoad(key, fallback=[]) {
-  try {
-    const local = localStorage.getItem(key)
-    if (local) return safeParseJSON(local, fallback)
-  } catch(e) {}
-  try {
-    const r = await window.storage?.get?.(key)
-    if(r?.value) return safeParseJSON(r.value, fallback)
-  } catch(e) {}
-  return fallback
-}
-const loadStoredProps = async () => {
-  const savedProps = await storageLoad("hcg-props", [])
-  return hydratePropsWithDocumentPayloads((savedProps || []).map(normalizeProp))
-}
-const lsLoad = (key, fallback) => {
-  try {
-    const raw = localStorage.getItem(key)
-    return raw ? safeParseJSON(raw, fallback) : fallback
-  } catch (e) {
-    return fallback
-  }
-}
-const lsSave = (key, value) => {
-  try {
-    localStorage.setItem(key, JSON.stringify(value))
-    localStorage.setItem("hcg-sync-ts", String(Date.now()))
-    localStorage.setItem("hcg-last-saved-at", now())
-  } catch (e) {
-    reportStorageFailure(`Local save failed for ${key}.`, e)
+})
+const toSupabasePropertyPayload = (property, teamId) => {
+  const normalized = normalizeProp(property)
+  return {
+    team_id: teamId,
+    legacy_property_id: normalized.id,
+    address: normalized.address,
+    work_type: normalized.workType,
+    permit_status: normalized.permitStatus,
+    permit_number: normalized.permitNumber || "",
+    hcad_number: normalized.hcadNumber || "",
+    submitted_to: normalized.submittedTo || "",
+    submitted_date: normalizeDateInput(normalized.submittedDate) || null,
+    started_at: normalized.startedAt || null,
+    electric: !!normalized.electric,
+    gas: !!normalized.gas,
+    water: !!normalized.water,
+    notes: normalized.notes || "",
+    is_completed: !!normalized.isCompleted,
+    completed_at: normalized.completedAt || null,
+    invoice_status: normalized.invoiceStatus || null,
+    work_order_number: normalized.workOrderNumber || "",
+    county_pm_name: normalized.countyPmName || "",
+    mobilization_date: normalizeDateInput(normalized.mobilizationDate) || null,
+    ticket811: normalized.ticket811 || "",
+    permit_portal_url: normalized.permitPortalUrl || "",
+    prepared_by: normalized.preparedBy || "",
+    compliance_notes: normalized.complianceNotes || "",
+    assigned_vendor_ids: [],
+    assigned_inspector_ids: [],
+    photos: normalized.photos || [],
+    documents: normalized.documents || [],
+    record: {
+      ...normalized,
+      clientId: normalized.clientId || "",
+      invoiceId: normalized.invoiceId || null,
+      assignedVendors: normalized.assignedVendors || [],
+      assignedInspectors: normalized.assignedInspectors || []
+    }
   }
 }
 const userId = () => `user-${uid()}`
@@ -1708,6 +1802,124 @@ const buildSingleCompanyAuthState = (storedUsers = [], storedTeams = []) => {
   return { normalizedUsers:baseUsers, normalizedTeams }
 }
 
+const normalizeClientRecord = (client = {}) => ({
+  id: String(client.id || client.legacy_client_id || "").trim() || uid(),
+  name: String(client.name || "").trim(),
+  company: String(client.company || "").trim(),
+  address: String(client.address || "").trim(),
+  phone: String(client.phone || "").trim(),
+  email: String(client.email || "").trim(),
+  jobId: String(client.jobId || client.job_id || "").trim(),
+  notes: String(client.notes || "").trim(),
+  createdAt: client.createdAt || client.created_at || now()
+})
+
+const normalizeVendorRecord = (vendor = {}) => ({
+  id: String(vendor.id || vendor.legacy_vendor_id || "").trim() || uid(),
+  code: String(vendor.code || "").trim(),
+  company: String(vendor.company || "").trim(),
+  trade: String(vendor.trade || CONTRACTOR_TRADES[0]).trim() || CONTRACTOR_TRADES[0],
+  contact: String(vendor.contact || vendor.contact_name || "").trim(),
+  phone: String(vendor.phone || "").trim(),
+  email: String(vendor.email || "").trim(),
+  license: String(vendor.license || "").trim(),
+  notes: String(vendor.notes || "").trim(),
+  active: vendor.active !== false,
+  createdAt: vendor.createdAt || vendor.created_at || now()
+})
+
+const normalizeInspectorRecord = (inspector = {}) => ({
+  id: String(inspector.id || inspector.legacy_inspector_id || "").trim() || uid(),
+  name: String(inspector.name || "").trim(),
+  inspectorType: String(inspector.inspectorType || inspector.inspector_type || INSPECTOR_TYPES[0]).trim() || INSPECTOR_TYPES[0],
+  agency: String(inspector.agency || inspector.department || "").trim(),
+  badge: String(inspector.badge || "").trim(),
+  phone: String(inspector.phone || "").trim(),
+  email: String(inspector.email || "").trim(),
+  availability: String(inspector.availability || "").trim(),
+  certifications: String(inspector.certifications || "").trim(),
+  notes: String(inspector.notes || "").trim(),
+  active: inspector.active !== false,
+  createdAt: inspector.createdAt || inspector.created_at || now()
+})
+
+const toSupabaseClientPayload = (client, teamId) => ({
+  team_id: teamId,
+  legacy_client_id: client.id,
+  name: client.name,
+  company: client.company,
+  address: client.address,
+  phone: client.phone,
+  email: client.email,
+  notes: client.notes,
+  metadata: {
+    jobId: client.jobId || "",
+    createdAt: client.createdAt || now()
+  }
+})
+
+const fromSupabaseClientPayload = (client = {}) =>
+  normalizeClientRecord({
+    ...client,
+    jobId: client?.metadata?.jobId || "",
+    createdAt: client?.metadata?.createdAt || client.created_at
+  })
+
+const toSupabaseVendorPayload = (vendor, teamId) => ({
+  team_id: teamId,
+  legacy_vendor_id: vendor.id,
+  code: vendor.code,
+  company: vendor.company,
+  trade: vendor.trade,
+  contact_name: vendor.contact,
+  phone: vendor.phone,
+  email: vendor.email,
+  notes: vendor.notes,
+  metadata: {
+    license: vendor.license || "",
+    active: vendor.active !== false,
+    createdAt: vendor.createdAt || now()
+  }
+})
+
+const fromSupabaseVendorPayload = (vendor = {}) =>
+  normalizeVendorRecord({
+    ...vendor,
+    contact: vendor.contact_name,
+    license: vendor?.metadata?.license || "",
+    active: vendor?.metadata?.active,
+    createdAt: vendor?.metadata?.createdAt || vendor.created_at
+  })
+
+const toSupabaseInspectorPayload = (inspector, teamId) => ({
+  team_id: teamId,
+  legacy_inspector_id: inspector.id,
+  name: inspector.name,
+  inspector_type: inspector.inspectorType,
+  department: inspector.agency,
+  phone: inspector.phone,
+  email: inspector.email,
+  notes: inspector.notes,
+  metadata: {
+    badge: inspector.badge || "",
+    availability: inspector.availability || "",
+    certifications: inspector.certifications || "",
+    active: inspector.active !== false,
+    createdAt: inspector.createdAt || now()
+  }
+})
+
+const fromSupabaseInspectorPayload = (inspector = {}) =>
+  normalizeInspectorRecord({
+    ...inspector,
+    agency: inspector.department,
+    badge: inspector?.metadata?.badge || "",
+    availability: inspector?.metadata?.availability || "",
+    certifications: inspector?.metadata?.certifications || "",
+    active: inspector?.metadata?.active,
+    createdAt: inspector?.metadata?.createdAt || inspector.created_at
+  })
+
 
 /* ---- Push Notification helper ---- */
 async function requestPushPermission() {
@@ -1772,162 +1984,365 @@ export default function JLCMSApp() {
   const [selectedInvoiceId, setSelectedInvoiceId] = useState("")
   const [authLoaded,   setAuthLoaded]   = useState(false)
   const [needsInitialSetup, setNeedsInitialSetup] = useState(false)
-  const [lastSavedAt,  setLastSavedAt]  = useState(lsLoad("hcg-last-saved-at", ""))
-  const [shownOneTimeNotifications, setShownOneTimeNotifications] = useState(() => loadOneTimeNotificationLedger())
+  const [lastSavedAt,  setLastSavedAt]  = useState("")
+  const [shownOneTimeNotifications, setShownOneTimeNotifications] = useState({})
   const [resetPasswordTarget, setResetPasswordTarget] = useState(null)
   const [resetPasswordForm, setResetPasswordForm] = useState({ password:"", confirmPassword:"" })
   const [resetPasswordError, setResetPasswordError] = useState("")
   const firedRef = useRef(new Set())
   const propsLoadedRef = useRef(false)
+  const workspaceLoadedRef = useRef(false)
+  const workspaceTeamIdRef = useRef("")
+  const syncedPropertyIdsRef = useRef([])
+
+  const persistUserRecord = useCallback(async (userRecord) => {
+    const workspace = await getOrCreateWorkspaceTeam()
+    const payload = toSupabaseUserPayload(userRecord, workspace.id)
+    return createSupabaseUser(payload).catch(async (error) => {
+      if (String(error?.code || "") === "23505") {
+        return updateSupabaseUser(userRecord.id, payload)
+      }
+      throw error
+    })
+  }, [])
+
+  const persistPropertyRecord = useCallback(async (propertyRecord) => {
+    const workspace = await getOrCreateWorkspaceTeam()
+    const payload = toSupabasePropertyPayload(propertyRecord, workspace.id)
+    return createSupabaseProperty(payload).catch(async (error) => {
+      if (String(error?.code || "") === "23505") {
+        return updateSupabaseProperty(propertyRecord.id, payload)
+      }
+      throw error
+    })
+  }, [])
+
+  const saveClientRecord = useCallback(async (clientRecord) => {
+    const normalized = normalizeClientRecord(clientRecord)
+    setClients((prev) => {
+      const exists = prev.some((item) => item.id === normalized.id)
+      const next = exists
+        ? prev.map((item) => (item.id === normalized.id ? normalized : item))
+        : [normalized, ...prev];
+
+      if (normalized.jobId) {
+        return next.map((item) =>
+          item.id !== normalized.id && item.jobId === normalized.jobId
+            ? { ...item, jobId: "" }
+            : item
+        );
+      }
+
+      return next;
+    });
+
+    setProps((prev) =>
+      prev.map((property) => {
+        if (property.clientId === normalized.id && property.id !== normalized.jobId) {
+          return { ...property, clientId: "" };
+        }
+        if (normalized.jobId && property.id === normalized.jobId) {
+          return { ...property, clientId: normalized.id };
+        }
+        if (!normalized.jobId && property.clientId === normalized.id) {
+          return { ...property, clientId: "" };
+        }
+        return property;
+      })
+    );
+
+    try {
+      const workspace = await getOrCreateWorkspaceTeam();
+      const payload = toSupabaseClientPayload(normalized, workspace.id);
+      const saved = await createClientRecord(payload).catch(async (error) => {
+        if (String(error?.code || "") === "23505") {
+          return updateClientRecord(normalized.id, payload);
+        }
+        throw error;
+      });
+      const mapped = fromSupabaseClientPayload(saved);
+      setClients((prev) => prev.map((item) => (item.id === mapped.id ? mapped : item)));
+      return { ok: true, data: mapped };
+    } catch (error) {
+      console.error("Supabase client save failed, local state preserved.", error);
+      return { ok: false, error };
+    }
+  }, []);
+
+  const removeClientRecord = useCallback(async (clientId) => {
+    setClients((prev) => prev.filter((client) => client.id !== clientId));
+    setProps((prev) => prev.map((property) => property.clientId === clientId ? { ...property, clientId: "" } : property));
+
+    try {
+      await deleteClientRecord(clientId);
+      return { ok: true };
+    } catch (error) {
+      console.error("Supabase client delete failed, local removal preserved.", error);
+      return { ok: false, error };
+    }
+  }, []);
+
+  const saveVendorRecord = useCallback(async (vendorRecord) => {
+    const normalized = normalizeVendorRecord(vendorRecord);
+    setVendors((prev) => {
+      const exists = prev.some((item) => item.id === normalized.id);
+      return exists
+        ? prev.map((item) => (item.id === normalized.id ? normalized : item))
+        : [...prev, normalized];
+    });
+
+    try {
+      const workspace = await getOrCreateWorkspaceTeam();
+      const payload = toSupabaseVendorPayload(normalized, workspace.id);
+      const saved = await createVendor(payload).catch(async (error) => {
+        if (String(error?.code || "") === "23505") {
+          return updateVendor(normalized.id, payload);
+        }
+        throw error;
+      });
+      const mapped = fromSupabaseVendorPayload(saved);
+      setVendors((prev) => prev.map((item) => (item.id === mapped.id ? mapped : item)));
+      return { ok: true, data: mapped };
+    } catch (error) {
+      console.error("Supabase vendor save failed, local state preserved.", error);
+      return { ok: false, error };
+    }
+  }, []);
+
+  const removeVendorRecord = useCallback(async (vendorId) => {
+    setVendors((prev) => prev.filter((vendor) => vendor.id !== vendorId));
+
+    try {
+      await deleteVendor(vendorId);
+      return { ok: true };
+    } catch (error) {
+      console.error("Supabase vendor delete failed, local removal preserved.", error);
+      return { ok: false, error };
+    }
+  }, []);
+
+  const saveInspectorRecord = useCallback(async (inspectorRecord) => {
+    const normalized = normalizeInspectorRecord(inspectorRecord);
+    setInspectors((prev) => {
+      const exists = prev.some((item) => item.id === normalized.id);
+      return exists
+        ? prev.map((item) => (item.id === normalized.id ? normalized : item))
+        : [...prev, normalized];
+    });
+
+    try {
+      const workspace = await getOrCreateWorkspaceTeam();
+      const payload = toSupabaseInspectorPayload(normalized, workspace.id);
+      const saved = await createInspector(payload).catch(async (error) => {
+        if (String(error?.code || "") === "23505") {
+          return updateInspector(normalized.id, payload);
+        }
+        throw error;
+      });
+      const mapped = fromSupabaseInspectorPayload(saved);
+      setInspectors((prev) => prev.map((item) => (item.id === mapped.id ? mapped : item)));
+      return { ok: true, data: mapped };
+    } catch (error) {
+      console.error("Supabase inspector save failed, local state preserved.", error);
+      return { ok: false, error };
+    }
+  }, []);
+
+  const removeInspectorRecord = useCallback(async (inspectorId) => {
+    setInspectors((prev) => prev.filter((inspector) => inspector.id !== inspectorId));
+
+    try {
+      await deleteInspector(inspectorId);
+      return { ok: true };
+    } catch (error) {
+      console.error("Supabase inspector delete failed, local removal preserved.", error);
+      return { ok: false, error };
+    }
+  }, []);
+
+  useEffect(() => {
+    getTeams()
+      .then((data) => {
+        console.log("Supabase teams connection test:", data)
+      })
+      .catch((error) => {
+        console.error("Supabase teams connection test failed:", error)
+      })
+  }, [])
 
 
   /* ---- Load / Save ---- */
   useEffect(() => {
-    loadStoredProps()
-      .then(d=>{ if(d.length) setProps(d) })
-      .finally(()=>{ propsLoadedRef.current = true })
-    storageLoad("hcg-mileage").then(d=>{ if(d.length) setMileage(d.map(normalizeMileageEntry)) })
-    storageLoad("hcg-clients").then(d=>{ if(d.length) setClients(d) })
-    storageLoad("hcg-invoices",[]).then(d=>{ if(d.length) setInvoices(d) })
-    storageLoad("hcg-tasks",[]).then(d=>{
-      if (d.length) {
-        setTasks(d)
-        return
+    let cancelled = false
+    const loadWorkspace = async () => {
+      try {
+        const workspace = await getOrCreateWorkspaceTeam()
+        if (cancelled) return
+        workspaceTeamIdRef.current = workspace.id
+
+        const [remoteClients, remoteVendors, remoteInspectors, remoteState] = await Promise.all([
+          fetchClientsFromSupabase().catch((error) => {
+            console.error("Supabase clients load failed.", error)
+            return []
+          }),
+          fetchVendorsFromSupabase().catch((error) => {
+            console.error("Supabase vendors load failed.", error)
+            return []
+          }),
+          fetchInspectorsFromSupabase().catch((error) => {
+            console.error("Supabase inspectors load failed.", error)
+            return []
+          }),
+          getWorkspaceState(workspace.id).catch((error) => {
+            console.error("Supabase workspace state load failed.", error)
+            return null
+          })
+        ])
+
+        const snapshot = remoteState?.data || buildWorkspaceSnapshotPayload()
+        const initialClients = (remoteClients || []).map(fromSupabaseClientPayload)
+        const initialVendors = (remoteVendors || []).map(fromSupabaseVendorPayload)
+        const initialInspectors = (remoteInspectors || []).map(fromSupabaseInspectorPayload)
+        const remoteUsers = Array.isArray(snapshot?.users) ? snapshot.users : []
+        const remoteTeams = Array.isArray(snapshot?.teams) && snapshot.teams.length
+          ? snapshot.teams
+          : [{
+              teamId: FIXED_TEAM_ID,
+              teamName: workspace.team_name || FIXED_TEAM_NAME,
+              inviteCode: workspace.invite_code || DEFAULT_INVITE_CODE,
+              todayFocusCustom: workspace.today_focus_custom || "",
+              ...normalizeCompanySettings({
+                companyAddress: workspace.company_address,
+                billingContactName: workspace.billing_contact_name,
+                billingContactEmail: workspace.billing_contact_email,
+                billingContactPhone: workspace.billing_contact_phone,
+                paymentTerms: workspace.payment_terms,
+                acceptedPaymentMethods: workspace.accepted_payment_methods,
+                paymentInstructions: workspace.payment_instructions
+              }),
+              members: [],
+              pendingRequests: [],
+              roles: Array.isArray(workspace.roles) ? workspace.roles : ["ceo","management","operations","member"],
+              rolePermissions: workspace.role_permissions || defaultRolePermissions()
+            }]
+        const { normalizedUsers, normalizedTeams } = buildSingleCompanyAuthState(remoteUsers, remoteTeams)
+
+        if (cancelled) return
+
+        setProps((snapshot?.props || []).map(normalizeProp))
+        setMileage((snapshot?.mileage || []).map(normalizeMileageEntry))
+        setInvoices(Array.isArray(snapshot?.invoices) ? snapshot.invoices : [])
+        setTasks(Array.isArray(snapshot?.tasks) ? snapshot.tasks : [])
+        setOneOffScheduleBlocks(Array.isArray(snapshot?.oneOffScheduleBlocks) ? snapshot.oneOffScheduleBlocks : [])
+        setRecurringWeeklySchedule(Array.isArray(snapshot?.recurringWeeklySchedule) ? snapshot.recurringWeeklySchedule : [])
+        setNotifications(Array.isArray(snapshot?.notifications) ? snapshot.notifications : [])
+        setUsers(normalizedUsers)
+        setTeams(normalizedTeams)
+        setNeedsInitialSetup(normalizedUsers.length===0)
+        setMessages(sanitizeMessages(Array.isArray(snapshot?.messages) ? snapshot.messages : [], normalizedUsers))
+        setCurrentUser(snapshot?.currentUser || null)
+        setShownOneTimeNotifications(snapshot?.shownOneTimeNotifications || {})
+        setLastSavedAt(String(snapshot?.lastSavedAt || remoteState?.updated_at || "").trim())
+        setClients(initialClients)
+        setVendors(initialVendors)
+        setInspectors(initialInspectors)
+
+        propsLoadedRef.current = true
+        workspaceLoadedRef.current = true
+        setAuthLoaded(true)
+        if (typeof Notification !== "undefined" && Notification.permission === "granted") setPushEnabled(true)
+      } catch (error) {
+        console.error("Supabase workspace bootstrap failed.", error)
+        propsLoadedRef.current = true
+        workspaceLoadedRef.current = true
+        setAuthLoaded(true)
       }
-      storageLoad("hcg-workflow",[]).then(old=>{
-        if (old.length) {
-          setTasks(old.map(item=>({
-            id:item.id || uid(),
-            title:item.title || "",
-            detail:item.notes || "",
-            assignedUserId:item.owner || "",
-            propertyId:"",
-            clientId:"",
-            dueDate:item.due || "",
-            dueTime:"",
-            priority:"Normal",
-            status:item.status==="done" ? "Done" : item.status==="in-progress" ? "In Progress" : "To Do",
-            createdAt:item.createdAt || now()
-          })))
-        }
-      })
-    })
-    storageLoad("hcg-oneoff-schedule-blocks",[]).then(d=>{
-      if (d.length) {
-        setOneOffScheduleBlocks(d)
-        return
-      }
-      storageLoad("hcg-custom-schedule",[]).then(old=>{
-        if (old.length) {
-          setOneOffScheduleBlocks(old.map(entry=>({
-            id:entry.id || uid(),
-            userId:"",
-            date:"",
-            start:entry.time || "08:00 AM",
-            end:entry.end || "05:00 PM",
-            title:entry.label || "One-Off Block",
-            detail:entry.detail || "",
-            type:"supplement",
-            createdBy:entry.createdBy || "",
-            createdAt:entry.createdAt || now()
-          })))
-        }
-      })
-    })
-    storageLoad("hcg-recurring-weekly-schedule",[]).then(d=>{
-      if (d.length) {
-        setRecurringWeeklySchedule(d)
-        return
-      }
-      storageLoad("hcg-weekly-schedule",[]).then(old=>{ if(old.length) setRecurringWeeklySchedule(old) })
-    })
-    storageLoad("hcg-vendors").then(d=>{ if(d.length) setVendors(d) })
-    storageLoad("hcg-inspectors").then(d=>{ if(d.length) setInspectors(d) })
-    storageLoad("hcg-notifications",[]).then(d=>{ if(d.length) setNotifications(d) })
-    const storedUsers = lsLoad("users", [])
-    const storedTeams = lsLoad("teams", [])
-    const { normalizedUsers, normalizedTeams } = buildSingleCompanyAuthState(storedUsers, storedTeams)
-    setUsers(normalizedUsers)
-    setTeams(normalizedTeams)
-    setNeedsInitialSetup(normalizedUsers.length===0)
-    setMessages(sanitizeMessages(lsLoad("messages", []), normalizedUsers))
-    setCurrentUser(lsLoad("currentUser", null))
-    setLastSavedAt(lsLoad("hcg-last-saved-at", ""))
-    setAuthLoaded(true)
-    // Check push permission
-    if (typeof Notification !== "undefined" && Notification.permission === "granted") setPushEnabled(true)
-  },[])
-  useEffect(()=>{
-    if (!propsLoadedRef.current) return
-    storageSave("hcg-props",props)
-  },[props])
-  useEffect(()=>{ storageSave("hcg-mileage",mileage) },[mileage])
-  useEffect(()=>{ storageSave("hcg-clients",clients) },[clients])
-  useEffect(()=>{ storageSave("hcg-invoices",invoices) },[invoices])
-  useEffect(()=>{ storageSave("hcg-tasks",tasks) },[tasks])
-  useEffect(()=>{ storageSave("hcg-oneoff-schedule-blocks",oneOffScheduleBlocks) },[oneOffScheduleBlocks])
-  useEffect(()=>{ storageSave("hcg-recurring-weekly-schedule",recurringWeeklySchedule) },[recurringWeeklySchedule])
-  useEffect(()=>{ storageSave("hcg-vendors",vendors) },[vendors])
-  useEffect(()=>{ storageSave("hcg-inspectors",inspectors) },[inspectors])
-  useEffect(()=>{ if(notifications.length) storageSave("hcg-notifications",notifications.slice(0,100)) },[notifications])
-  useEffect(()=>{ if(authLoaded) lsSave("users",users) },[users, authLoaded])
-  useEffect(()=>{ if(authLoaded) lsSave("teams",teams) },[teams, authLoaded])
-  useEffect(()=>{ if(authLoaded) lsSave("messages", sanitizeMessages(messages, users)) },[messages, users, authLoaded])
-  useEffect(()=>{ if(authLoaded) lsSave("currentUser",currentUser) },[currentUser, authLoaded])
-  useEffect(() => {
-    const syncSavedLabel = () => setLastSavedAt(lsLoad("hcg-last-saved-at", ""))
-    syncSavedLabel()
-    window.addEventListener("storage", syncSavedLabel)
-    return () => window.removeEventListener("storage", syncSavedLabel)
+    }
+
+    loadWorkspace()
+    return () => {
+      cancelled = true
+    }
   }, [])
+  useEffect(() => {
+    if (!authLoaded || !workspaceLoadedRef.current || !workspaceTeamIdRef.current) return
+    const savedAt = now()
+    const payload = buildWorkspaceSnapshotPayload({
+      props,
+      mileage,
+      invoices,
+      tasks,
+      oneOffScheduleBlocks,
+      recurringWeeklySchedule,
+      users,
+      teams,
+      messages: sanitizeMessages(messages, users),
+      currentUser,
+      notifications,
+      shownOneTimeNotifications,
+      lastSavedAt: savedAt
+    })
+
+    saveWorkspaceState(workspaceTeamIdRef.current, payload)
+      .then(() => setLastSavedAt(savedAt))
+      .catch((error) => {
+        console.error("Supabase workspace state save failed.", error)
+      })
+  }, [
+    authLoaded,
+    props,
+    mileage,
+    invoices,
+    tasks,
+    oneOffScheduleBlocks,
+    recurringWeeklySchedule,
+    users,
+    teams,
+    messages,
+    currentUser,
+    notifications,
+    shownOneTimeNotifications
+  ])
+  useEffect(() => {
+    if (!authLoaded || !workspaceLoadedRef.current || !workspaceTeamIdRef.current) return
+    Promise.all((props || []).map(persistPropertyRecord))
+      .catch((error) => {
+        console.error("Supabase properties sync failed.", error)
+      })
+
+    const currentIds = (props || []).map(item => item.id)
+    const removedIds = syncedPropertyIdsRef.current.filter(id => !currentIds.includes(id))
+    removedIds.forEach(id => {
+      deleteSupabaseProperty(id).catch(error => {
+        console.error("Supabase property delete sync failed.", error)
+      })
+    })
+    syncedPropertyIdsRef.current = currentIds
+  }, [authLoaded, props, persistPropertyRecord])
+  useEffect(() => {
+    if (!authLoaded || !workspaceLoadedRef.current) return
+    const mainTeam = (teams || []).find(team => team.teamId === FIXED_TEAM_ID)
+    if (!mainTeam) return
+    syncWorkspaceTeam({
+      team_name: mainTeam.teamName || FIXED_TEAM_NAME,
+      invite_code: mainTeam.inviteCode || "",
+      today_focus_custom: mainTeam.todayFocusCustom || "",
+      company_address: mainTeam.companyAddress || DEFAULT_COMPANY_SETTINGS.companyAddress,
+      billing_contact_name: mainTeam.billingContactName || DEFAULT_COMPANY_SETTINGS.billingContactName,
+      billing_contact_email: mainTeam.billingContactEmail || DEFAULT_COMPANY_SETTINGS.billingContactEmail,
+      billing_contact_phone: mainTeam.billingContactPhone || DEFAULT_COMPANY_SETTINGS.billingContactPhone,
+      payment_terms: mainTeam.paymentTerms || DEFAULT_COMPANY_SETTINGS.paymentTerms,
+      accepted_payment_methods: mainTeam.acceptedPaymentMethods || DEFAULT_COMPANY_SETTINGS.acceptedPaymentMethods,
+      payment_instructions: mainTeam.paymentInstructions || DEFAULT_COMPANY_SETTINGS.paymentInstructions,
+      roles: mainTeam.roles || ["ceo","management","operations","member"],
+      role_permissions: mainTeam.rolePermissions || defaultRolePermissions()
+    }).catch(error => {
+      console.error("Supabase team settings sync failed.", error)
+    })
+  }, [authLoaded, teams])
   useEffect(() => {
     saveOneTimeNotificationLedger(shownOneTimeNotifications)
   }, [shownOneTimeNotifications])
-
-  useEffect(() => {
-    const syncFromStorage = async () => {
-      const [p,m,c,inv,t,os,rs,v,i,n] = await Promise.all([
-        loadStoredProps(),
-        storageLoad("hcg-mileage",[]),
-        storageLoad("hcg-clients",[]),
-        storageLoad("hcg-invoices",[]),
-        storageLoad("hcg-tasks",[]),
-        storageLoad("hcg-oneoff-schedule-blocks",[]),
-        storageLoad("hcg-recurring-weekly-schedule",[]),
-        storageLoad("hcg-vendors",[]),
-        storageLoad("hcg-inspectors",[]),
-        storageLoad("hcg-notifications",[])
-      ])
-      setProps(p||[])
-      setMileage((m||[]).map(normalizeMileageEntry))
-      setClients(c||[])
-      setInvoices(inv||[])
-      setTasks(t||[])
-      setOneOffScheduleBlocks(os||[])
-      setRecurringWeeklySchedule(rs||[])
-      setVendors(v||[])
-      setInspectors(i||[])
-      setNotifications(n||[])
-      const { normalizedUsers, normalizedTeams } = buildSingleCompanyAuthState(lsLoad("users", []), lsLoad("teams", []))
-      setUsers(normalizedUsers)
-      setTeams(normalizedTeams)
-      setNeedsInitialSetup(normalizedUsers.length===0)
-      setMessages(sanitizeMessages(lsLoad("messages", []), normalizedUsers))
-      setLastSavedAt(lsLoad("hcg-last-saved-at", ""))
-      setShownOneTimeNotifications(loadOneTimeNotificationLedger())
-    }
-
-    const onStorage = (e) => {
-      if (e.key==="hcg-sync-ts") syncFromStorage()
-    }
-    window.addEventListener("storage", onStorage)
-    const onVisible = () => { if (!document.hidden) syncFromStorage() }
-    document.addEventListener("visibilitychange", onVisible)
-    return () => {
-      window.removeEventListener("storage", onStorage)
-      document.removeEventListener("visibilitychange", onVisible)
-    }
-  }, [])
 
 
   /* ---- Tick every 30s ---- */
@@ -1940,14 +2355,8 @@ export default function JLCMSApp() {
   /* ---- Fire notification ---- */
   const fireNotif = useCallback((type, title, body, recipients, dedupeKey = "") => {
     const key = dedupeKey || `${type}-${title}-${new Date().toDateString()}`
-    let persisted = {}
-    try { persisted = JSON.parse(localStorage.getItem("hcg-fired-notif-keys") || "{}") || {} } catch (e) {}
-    if (firedRef.current.has(key) || persisted[key]) return
+    if (firedRef.current.has(key)) return
     firedRef.current.add(key)
-    try {
-      persisted[key] = now()
-      localStorage.setItem("hcg-fired-notif-keys", JSON.stringify(persisted))
-    } catch (e) {}
 
     const teamRecipients = users.filter(u=>u.approved && u.teamId===currentUser?.teamId).map(u=>u.id)
     const normalizedRecipients = (recipients || [])
@@ -2035,7 +2444,7 @@ export default function JLCMSApp() {
           eventKey,
           type: "task",
           title: `Task Assigned - ${task.title || "Untitled Task"}`,
-          body: `Due ${displayDate(task.dueDate)}${task.dueTime ? ` at ${task.dueTime}` : ""}`
+          body: `Due ${displayDate(task.dueDate)}${task.dueTime ? ` at ${displayTimeValue(task.dueTime)}` : ""}`
         })
       })
 
@@ -2131,10 +2540,10 @@ export default function JLCMSApp() {
         const dueMin = hh * 60 + mm
         const diff = dueMin - totalMin
         if (diff >= 29 && diff <= 31) {
-          fireNotif("deadline", `Task Due in 30 Minutes - ${task.title}`, `Due at ${task.dueTime}.`, [task.assignedUserId].filter(Boolean))
+          fireNotif("deadline", `Task Due in 30 Minutes - ${task.title}`, `Due at ${displayTimeValue(task.dueTime)}.`, [task.assignedUserId].filter(Boolean))
         }
         if (diff >= 14 && diff <= 16) {
-          fireNotif("deadline", `Task Due in 15 Minutes - ${task.title}`, `Due at ${task.dueTime}.`, [task.assignedUserId].filter(Boolean))
+          fireNotif("deadline", `Task Due in 15 Minutes - ${task.title}`, `Due at ${displayTimeValue(task.dueTime)}.`, [task.assignedUserId].filter(Boolean))
         }
       })
 
@@ -2230,8 +2639,12 @@ export default function JLCMSApp() {
     if (!found) return { ok:false, error:"Invalid email or password." }
     const sessionId = uid()
     const loginAt = now()
-    setUsers(prev=>prev.map(u=>u.id!==found.id?u:{...u,activeSessionId:sessionId,lastLoginAt:loginAt}))
-    setCurrentUser({ ...found, activeSessionId:sessionId, lastLoginAt:loginAt })
+    const nextUser = { ...found, activeSessionId:sessionId, lastLoginAt:loginAt }
+    setUsers(prev=>prev.map(u=>u.id!==found.id?u:nextUser))
+    setCurrentUser(nextUser)
+    persistUserRecord(nextUser).catch(error => {
+      console.error("Supabase user login sync failed.", error)
+    })
     return { ok:true }
   }
 
@@ -2271,9 +2684,9 @@ export default function JLCMSApp() {
     setTeams([nextTeam])
     setCurrentUser(nextUser)
     setNeedsInitialSetup(false)
-    lsSave("users", [nextUser])
-    lsSave("teams", [nextTeam])
-    lsSave("currentUser", nextUser)
+    persistUserRecord(nextUser).catch(error => {
+      console.error("Supabase admin user create failed.", error)
+    })
     return { ok:true }
   }
 
@@ -2319,17 +2732,26 @@ export default function JLCMSApp() {
       ]
     }))
     setCurrentUser(nextUser)
+    persistUserRecord(nextUser).catch(error => {
+      console.error("Supabase signup user create failed.", error)
+    })
     return { ok:true }
   }
 
   const logout = () => {
     if (currentUser?.id) {
-      setUsers(prev=>prev.map(u=>u.id!==currentUser.id?u:{...u,activeSessionId:null}))
+      const nextUser = { ...currentUser, activeSessionId:null }
+      setUsers(prev=>prev.map(u=>u.id!==currentUser.id?u:nextUser))
+      persistUserRecord(nextUser).catch(error => {
+        console.error("Supabase user logout sync failed.", error)
+      })
     }
     setCurrentUser(null)
   }
 
   const approveTeamRequest = (teamIdValue, userIdValue) => {
+    const targetUser = users.find(u=>u.id===userIdValue)
+    const nextUser = targetUser ? { ...targetUser, approved:true } : null
     setUsers(prev=>prev.map(u=>u.id!==userIdValue?u:{...u, approved:true}))
     setTeams(prev=>prev.map(t=>{
       if (t.teamId!==teamIdValue) return t
@@ -2337,6 +2759,11 @@ export default function JLCMSApp() {
       const members = (t.members||[]).includes(userIdValue) ? (t.members||[]) : [...(t.members||[]), userIdValue]
       return { ...t, pendingRequests:pending, members }
     }))
+    if (nextUser) {
+      persistUserRecord(nextUser).catch(error => {
+        console.error("Supabase user approval sync failed.", error)
+      })
+    }
   }
 
   const denyTeamRequest = (teamIdValue, userIdValue) => {
@@ -2344,6 +2771,9 @@ export default function JLCMSApp() {
     setTeams(prev=>prev.map(t=>t.teamId!==teamIdValue?t:{...t,pendingRequests:(t.pendingRequests||[]).filter(r=>r.userId!==userIdValue)}))
     setMessages(prev=>prev.filter(m=>m.senderId!==userIdValue && m.toUserId!==userIdValue))
     if (currentUser?.id===userIdValue) setCurrentUser(null)
+    deleteSupabaseUser(userIdValue).catch(error => {
+      console.error("Supabase denied user cleanup failed.", error)
+    })
   }
 
   const updateTeamInviteCode = (newCode) => {
@@ -2356,8 +2786,15 @@ export default function JLCMSApp() {
 
   const forceLogoutTeamUser = (userIdValue) => {
     if (!userIdValue) return
+    const targetUser = users.find(u=>u.id===userIdValue)
+    const nextUser = targetUser ? { ...targetUser, activeSessionId:null } : null
     setUsers(prev=>prev.map(u=>u.id!==userIdValue?u:{...u,activeSessionId:null}))
     if (currentUser?.id===userIdValue) setCurrentUser(null)
+    if (nextUser) {
+      persistUserRecord(nextUser).catch(error => {
+        console.error("Supabase force logout sync failed.", error)
+      })
+    }
   }
 
   const removeTeamUser = (userIdValue) => {
@@ -2370,6 +2807,9 @@ export default function JLCMSApp() {
     }))
     setMessages(prev=>prev.filter(m=>m.senderId!==userIdValue && m.toUserId!==userIdValue))
     if (currentUser?.id===userIdValue) setCurrentUser(null)
+    deleteSupabaseUser(userIdValue).catch(error => {
+      console.error("Supabase user removal failed.", error)
+    })
   }
 
   const updateCurrentProfile = (updates) => {
@@ -2397,6 +2837,17 @@ export default function JLCMSApp() {
       mustResetPassword: !!mustResetPassword,
       passwordResetSource: passwordChanged ? "" : String(u.passwordResetSource || "").trim()
     }))
+    persistUserRecord({
+      ...currentUser,
+      name:nextName,
+      email:nextEmail,
+      profilePic:nextPhoto,
+      password:nextPassword,
+      mustResetPassword: !!mustResetPassword,
+      passwordResetSource: passwordChanged ? "" : String(currentUser.passwordResetSource || "").trim()
+    }).catch(error => {
+      console.error("Supabase profile update sync failed.", error)
+    })
     return { ok:true }
   }
 
@@ -2416,8 +2867,16 @@ export default function JLCMSApp() {
       mustResetPassword:true,
       passwordResetSource:"admin_reset"
     }))
+    persistUserRecord({
+      ...target,
+      password,
+      mustResetPassword:true,
+      passwordResetSource:"admin_reset"
+    }).catch(error => {
+      console.error("Supabase password reset sync failed.", error)
+    })
     return { ok:true }
-  }, [currentUser?.role, currentUser?.teamId, users])
+  }, [currentUser?.role, currentUser?.teamId, persistUserRecord, users])
 
   const completeForcedPasswordReset = useCallback((nextPassword, confirmPassword) => {
     if (!currentUser?.id) return { ok:false, error:"No user session." }
@@ -2438,8 +2897,16 @@ export default function JLCMSApp() {
       mustResetPassword:false,
       passwordResetSource:""
     } : prev)
+    persistUserRecord({
+      ...currentUser,
+      password,
+      mustResetPassword:false,
+      passwordResetSource:""
+    }).catch(error => {
+      console.error("Supabase forced password reset completion sync failed.", error)
+    })
     return { ok:true }
-  }, [currentUser?.id])
+  }, [currentUser, persistUserRecord])
 
   const openResetPasswordModal = useCallback((user) => {
     if (!user) return
@@ -2560,7 +3027,13 @@ export default function JLCMSApp() {
     const cleanRole = String(role||"").trim().toLowerCase()
     if (!cleanRole) return { ok:false, error:"Invalid role." }
     if (!currentTeam?.roles?.includes(cleanRole) && cleanRole!=="ceo") return { ok:false, error:"Role not in team role list." }
+    const targetUser = users.find(u=>u.id===userIdValue)
     setUsers(prev=>prev.map(u=>u.id!==userIdValue?u:{...u,role:cleanRole}))
+    if (targetUser) {
+      persistUserRecord({ ...targetUser, role:cleanRole }).catch(error => {
+        console.error("Supabase role assignment sync failed.", error)
+      })
+    }
     return { ok:true }
   }
 
@@ -2582,12 +3055,6 @@ export default function JLCMSApp() {
 
   const deleteProp = (id) => {
     if(!window.confirm("Remove this property?")) return
-    const target = props.find(item=>item.id===id)
-    ;(target?.documents || []).forEach(doc => {
-      deleteDocumentPayload(doc.id).catch(error => {
-        reportStorageFailure(`Saved file cleanup failed for ${doc.name || "a document"}.`, error)
-      })
-    })
     setProps(p=>p.filter(x=>x.id!==id))
     if(selected===id) setSelected(null)
   }
@@ -2658,14 +3125,6 @@ export default function JLCMSApp() {
 
       try {
         const dataUrl = await readFileAsDataUrl(file)
-        await putDocumentPayload({
-          id:baseDocument.id,
-          name:baseDocument.name,
-          mimeType:baseDocument.mimeType,
-          size:baseDocument.size,
-          uploadedAt,
-          data:dataUrl
-        })
         setProps(prev=>prev.map(p=>p.id!==id ? p : normalizeProp({
           ...p,
           documents:[
@@ -2674,7 +3133,7 @@ export default function JLCMSApp() {
               ...baseDocument,
               data:dataUrl,
               dataStored:true,
-              storageKind:"indexeddb",
+              storageKind:"supabase",
               persistenceWarning:""
             })
           ]
@@ -2700,9 +3159,6 @@ export default function JLCMSApp() {
   }
 
   const removeDocument = useCallback((propId, documentId) => {
-    deleteDocumentPayload(documentId).catch(error => {
-      reportStorageFailure("Saved document cleanup failed during removal.", error)
-    })
     setProps(prev=>prev.map(p=>p.id!==propId ? p : normalizeProp({
       ...p,
       documents:(p.documents || []).filter(doc=>doc.id!==documentId)
@@ -2930,13 +3386,10 @@ export default function JLCMSApp() {
 
       setProps(nextProps)
       setMileage(Array.isArray(incoming.mileage) ? incoming.mileage.map(normalizeMileageEntry) : [])
-      setClients(Array.isArray(incoming.clients) ? incoming.clients : [])
       setInvoices(Array.isArray(incoming.invoices) ? incoming.invoices : [])
       setTasks(Array.isArray(incoming.tasks) ? incoming.tasks : [])
       setOneOffScheduleBlocks(Array.isArray(incoming.oneOffScheduleBlocks) ? incoming.oneOffScheduleBlocks : [])
       setRecurringWeeklySchedule(Array.isArray(incoming.recurringWeeklySchedule) ? incoming.recurringWeeklySchedule : [])
-      setVendors(Array.isArray(incoming.vendors) ? incoming.vendors : [])
-      setInspectors(Array.isArray(incoming.inspectors) ? incoming.inspectors : [])
       setNotifications(Array.isArray(incoming.notifications) ? incoming.notifications : [])
       setUsers(normalizedUsers)
       setTeams(normalizedTeams)
@@ -2944,28 +3397,26 @@ export default function JLCMSApp() {
       setMessages(nextMessages)
       setCurrentUser(incoming.currentUser || null)
 
+      const importedClients = Array.isArray(incoming.clients) ? incoming.clients.map(normalizeClientRecord) : []
+      const importedVendors = Array.isArray(incoming.vendors) ? incoming.vendors.map(normalizeVendorRecord) : []
+      const importedInspectors = Array.isArray(incoming.inspectors) ? incoming.inspectors.map(normalizeInspectorRecord) : []
+
+      setClients(importedClients)
+      setVendors(importedVendors)
+      setInspectors(importedInspectors)
+
       await Promise.all([
-        storageSave("hcg-props", nextProps),
-        storageSave("hcg-mileage", Array.isArray(incoming.mileage) ? incoming.mileage.map(normalizeMileageEntry) : []),
-        storageSave("hcg-clients", Array.isArray(incoming.clients) ? incoming.clients : []),
-        storageSave("hcg-invoices", Array.isArray(incoming.invoices) ? incoming.invoices : []),
-        storageSave("hcg-tasks", Array.isArray(incoming.tasks) ? incoming.tasks : []),
-        storageSave("hcg-oneoff-schedule-blocks", Array.isArray(incoming.oneOffScheduleBlocks) ? incoming.oneOffScheduleBlocks : []),
-        storageSave("hcg-recurring-weekly-schedule", Array.isArray(incoming.recurringWeeklySchedule) ? incoming.recurringWeeklySchedule : []),
-        storageSave("hcg-vendors", Array.isArray(incoming.vendors) ? incoming.vendors : []),
-        storageSave("hcg-inspectors", Array.isArray(incoming.inspectors) ? incoming.inspectors : []),
-        storageSave("hcg-notifications", Array.isArray(incoming.notifications) ? incoming.notifications : [])
+        ...importedClients.map(saveClientRecord),
+        ...importedVendors.map(saveVendorRecord),
+        ...importedInspectors.map(saveInspectorRecord)
       ])
-      lsSave("users", normalizedUsers)
-      lsSave("teams", normalizedTeams)
-      lsSave("messages", nextMessages)
-      lsSave("currentUser", incoming.currentUser || null)
-      setLastSavedAt(lsLoad("hcg-last-saved-at", ""))
+
+      setLastSavedAt(now())
       return { ok:true }
     } catch (error) {
       return { ok:false, error:"Unable to import backup file." }
     }
-  }, [setProps])
+  }, [saveClientRecord, saveInspectorRecord, saveVendorRecord, setProps])
 
   const billingCounts = {
     readyForInvoice: props.filter(p=>p.isCompleted && p.clientId && !p.invoiceId).length,
@@ -3624,7 +4075,7 @@ export default function JLCMSApp() {
       {tab==="home" && <HomeTab props={props} invoices={invoices} billingCounts={billingCounts} setTab={setTab} currentUser={currentUser} todayFocus={todayFocusMessage} />}
       {tab==="chat" && (can("chat","view") ? <ChatTab currentUser={currentUser} users={users} messages={messages} setMessages={setMessages} modePref={chatModePref} peerPref={chatPeerPref} onModePrefApplied={()=>{ setChatModePref("team"); setChatPeerPref("") }} onImmediateOneTimeAlert={notifyCurrentUserOneTimeEvent} /> : <AccessDenied page="Chat" />)}
       {tab==="team" && (can("team","view") ? <TeamTab currentUser={currentUser} currentTeam={currentTeam} users={users} onMessage={openPrivateMessage} canManageUsers={can("team","edit")} canResetPasswords={can("team","edit") && ["ceo","admin"].includes((currentUser?.role||"").toLowerCase())} isCurrentCeo={isCurrentCeo} onAssignUserRole={assignUserRole} onForceLogoutUser={forceLogoutTeamUser} onRemoveUser={removeTeamUser} onOpenResetPasswordModal={openResetPasswordModal} /> : <AccessDenied page="Team" />)}
-      {tab==="clients" && (can("clients","view") ? <ClientsTab clients={clients} setClients={setClients} props={props} setProps={setProps} canAdd={can("clients","add")} canEdit={can("clients","edit")} canDelete={can("clients","delete")} /> : <AccessDenied page="Clients" />)}
+      {tab==="clients" && (can("clients","view") ? <ClientsTab clients={clients} setClients={setClients} props={props} setProps={setProps} canAdd={can("clients","add")} canEdit={can("clients","edit")} canDelete={can("clients","delete")} onSaveClient={saveClientRecord} onDeleteClient={removeClientRecord} /> : <AccessDenied page="Clients" />)}
       {tab==="invoices" && (can("invoices","view") ? <InvoicesTab invoices={invoices} props={props} clients={clients} selectedInvoiceId={selectedInvoiceId} setSelectedInvoiceId={setSelectedInvoiceId} onUpdateInvoice={updateInvoice} onDeleteInvoice={deleteInvoice} onExportInvoice={exportInvoicePacket} canAdd={can("invoices","add")} canEdit={can("invoices","edit")} canDelete={can("invoices","delete")} /> : <AccessDenied page="Invoices" />)}
       {tab==="more" && (can("more","view") ? <MoreTab currentUser={currentUser} currentTeam={currentTeam} users={users} isCurrentAdmin={isCurrentAdmin} isCurrentCeo={isCurrentCeo} canResetPasswords={can("team","edit") && ["ceo","admin"].includes((currentUser?.role||"").toLowerCase())} onApprove={approveTeamRequest} onDeny={denyTeamRequest} onUpdateInviteCode={updateTeamInviteCode} onForceLogoutUser={forceLogoutTeamUser} onRemoveUser={removeTeamUser} onOpenResetPasswordModal={openResetPasswordModal} onUpdateProfile={updateCurrentProfile} onUpdateCompanyName={updateCompanyName} onUpdateCompanySettings={updateCompanySettings} onUpdateTodayFocus={updateTodayFocus} onCreateTeamRole={createTeamRole} onRenameTeamRole={renameTeamRole} onDeleteTeamRole={deleteTeamRole} onAssignUserRole={assignUserRole} onUpdateRolePermission={updateRolePermission} onExportData={exportAllData} onImportData={importAllData} lastSavedAt={lastSavedAt} onLogout={logout} /> : <AccessDenied page="More" />)}
 
@@ -3953,8 +4404,8 @@ export default function JLCMSApp() {
       {tab==="schedule"&&(can("schedule","view") ? <ScheduleTab activeUser={activeUser} currentUser={currentUser} teamUsers={teamUsers} notifications={notifications} fireNotif={fireNotif} recurringWeeklySchedule={recurringWeeklySchedule} setRecurringWeeklySchedule={setRecurringWeeklySchedule} oneOffScheduleBlocks={oneOffScheduleBlocks} setOneOffScheduleBlocks={setOneOffScheduleBlocks} tasks={tasks} setTasks={setTasks} properties={props} clients={clients} canAdd={can("schedule","add")} canEdit={can("schedule","edit")} canDelete={can("schedule","delete")} canManagePermanent={can("permanentSchedule","add")} onImmediateOneTimeAlert={notifyCurrentUserOneTimeEvent} /> : <AccessDenied page="Schedule" />)}
 
 
-      {tab==="vendors"&&(can("vendors","view") ? <VendorTab vendors={vendors} setVendors={setVendors} canAdd={can("vendors","add")} canEdit={can("vendors","edit")} canDelete={can("vendors","delete")} /> : <AccessDenied page="Vendors" />)}
-      {tab==="inspectors"&&(can("inspectors","view") ? <InspectorTab inspectors={inspectors} setInspectors={setInspectors} canAdd={can("inspectors","add")} canEdit={can("inspectors","edit")} canDelete={can("inspectors","delete")} /> : <AccessDenied page="Inspectors" />)}
+      {tab==="vendors"&&(can("vendors","view") ? <VendorTab vendors={vendors} setVendors={setVendors} canAdd={can("vendors","add")} canEdit={can("vendors","edit")} canDelete={can("vendors","delete")} onSaveVendor={saveVendorRecord} onDeleteVendor={removeVendorRecord} /> : <AccessDenied page="Vendors" />)}
+      {tab==="inspectors"&&(can("inspectors","view") ? <InspectorTab inspectors={inspectors} setInspectors={setInspectors} canAdd={can("inspectors","add")} canEdit={can("inspectors","edit")} canDelete={can("inspectors","delete")} onSaveInspector={saveInspectorRecord} onDeleteInspector={removeInspectorRecord} /> : <AccessDenied page="Inspectors" />)}
       {tab==="mileage"&&(can("mileage","view") ? <MileageTab mileage={mileage} setMileage={setMileage} addMileage={addMileageEntry} properties={props} clients={clients} canAdd={can("mileage","add")} canEdit={can("mileage","edit")} canDelete={can("mileage","delete")} /> : <AccessDenied page="Mileage" />)}
 
       {/* ========================== BOTTOM NAVIGATION ========================== */}
@@ -4650,7 +5101,7 @@ function InvoicesTab({ invoices, props, clients, selectedInvoiceId, setSelectedI
 }
 
 /* ========================== CLIENTS TAB ========================== */
-function ClientsTab({ clients, setClients, props, setProps, canAdd=true, canEdit=true, canDelete=true }) {
+function ClientsTab({ clients, setClients, props, setProps, canAdd=true, canEdit=true, canDelete=true, onSaveClient, onDeleteClient }) {
   const { isPhone: isMobile } = viewportInfo()
   const blank = { name:"", company:"", address:"", phone:"", email:"", jobId:"", notes:"" }
   const [form,setForm] = useState(blank)
@@ -4661,38 +5112,50 @@ function ClientsTab({ clients, setClients, props, setProps, canAdd=true, canEdit
   const [clientJobTypeFilter,setClientJobTypeFilter] = useState("All")
   const denyAccess = () => window.alert("You currently have view-only access. Ask management or the CEO to assign your role and permissions.")
 
-  const save = () => {
+  const save = async () => {
     if (!editing && !canAdd) { denyAccess(); return }
     if (editing && !canEdit) { denyAccess(); return }
     if (!form.name.trim()) return
     const clientId = editing || uid()
-    setClients(prev => {
-      let next = editing
-        ? prev.map(c=>c.id===editing?{...c,...form}:c)
-        : [{ id:clientId, ...form, createdAt:now() }, ...prev]
+    if (onSaveClient) {
+      await onSaveClient({
+        id: clientId,
+        ...form,
+        createdAt: editing ? (clients.find(c=>c.id===editing)?.createdAt || now()) : now()
+      })
+    } else {
+      setClients(prev => {
+        let next = editing
+          ? prev.map(c=>c.id===editing?{...c,...form}:c)
+          : [{ id:clientId, ...form, createdAt:now() }, ...prev]
 
-      if (form.jobId) {
-        next = next.map(c=>c.id!==clientId && c.jobId===form.jobId ? { ...c, jobId:"" } : c)
-      }
-      return next
-    })
+        if (form.jobId) {
+          next = next.map(c=>c.id!==clientId && c.jobId===form.jobId ? { ...c, jobId:"" } : c)
+        }
+        return next
+      })
 
-    setProps(prev=>prev.map(p=>{
-      if (p.clientId===clientId && p.id!==form.jobId) return { ...p, clientId:"" }
-      if (form.jobId && p.id===form.jobId) return { ...p, clientId:clientId }
-      if (!form.jobId && p.clientId===clientId) return { ...p, clientId:"" }
-      return p
-    }))
+      setProps(prev=>prev.map(p=>{
+        if (p.clientId===clientId && p.id!==form.jobId) return { ...p, clientId:"" }
+        if (form.jobId && p.id===form.jobId) return { ...p, clientId:clientId }
+        if (!form.jobId && p.clientId===clientId) return { ...p, clientId:"" }
+        return p
+      }))
+    }
 
     setForm(blank)
     setEditing(null)
   }
 
-  const del = (id) => {
+  const del = async (id) => {
     if (!canDelete) { denyAccess(); return }
     if (!window.confirm("Remove this client?\n\nAny linked job will stay in place, but the client assignment will be cleared.")) return
-    setClients(prev=>prev.filter(c=>c.id!==id))
-    setProps(prev=>prev.map(p=>p.clientId===id ? { ...p, clientId:"" } : p))
+    if (onDeleteClient) {
+      await onDeleteClient(id)
+    } else {
+      setClients(prev=>prev.filter(c=>c.id!==id))
+      setProps(prev=>prev.map(p=>p.clientId===id ? { ...p, clientId:"" } : p))
+    }
     if (editing===id) {
       setEditing(null)
       setForm(blank)
@@ -5754,6 +6217,84 @@ function MoreTab({ currentUser, currentTeam, users, isCurrentAdmin, isCurrentCeo
   )
 }
 
+function TimePicker({ value, onChange, style, allowEmpty=false, storageFormat="12h" }) {
+  const parsed = parseTimeValue(value) || parseTimeValue(storageFormat === "24h" ? "08:00" : "08:00 AM") || { hour24:8, minute:0 }
+  const [hour, setHour] = useState(String(parsed.hour24 % 12 || 12))
+  const [minute, setMinute] = useState(String(parsed.minute).padStart(2, "0"))
+  const [period, setPeriod] = useState(parsed.hour24 >= 12 ? "PM" : "AM")
+
+  useEffect(() => {
+    if (!value && allowEmpty) {
+      setHour("")
+      setMinute("00")
+      setPeriod("AM")
+      return
+    }
+    const next = parseTimeValue(value)
+    if (!next) return
+    setHour(String(next.hour24 % 12 || 12))
+    setMinute(String(next.minute).padStart(2, "0"))
+    setPeriod(next.hour24 >= 12 ? "PM" : "AM")
+  }, [allowEmpty, value])
+
+  const emitValue = (nextHour, nextMinute, nextPeriod) => {
+    if (allowEmpty && !nextHour) {
+      onChange("")
+      return
+    }
+    const base = `${nextHour || "12"}:${nextMinute} ${nextPeriod}`
+    onChange(storageFormat === "24h" ? formatTime24Hour(base) : formatTime12Hour(base))
+  }
+
+  const selectStyle = { ...iStyle, ...style, minWidth:0, width:"100%" }
+  const wrapperStyle = {
+    display:"grid",
+    gridTemplateColumns:"minmax(0,1fr) minmax(0,1fr) minmax(0,1fr)",
+    gap:8
+  }
+  const minuteOptions = Array.from({ length:60 }, (_, index)=>String(index).padStart(2, "0"))
+  const hourOptions = Array.from({ length:12 }, (_, index)=>String(index + 1))
+
+  return (
+    <div style={wrapperStyle}>
+      <select
+        value={hour}
+        onChange={e=>{
+          const nextHour = e.target.value
+          setHour(nextHour)
+          emitValue(nextHour, minute, period)
+        }}
+        style={selectStyle}
+      >
+        {allowEmpty && <option value="">No Time</option>}
+        {hourOptions.map(option=><option key={option} value={option}>{option}</option>)}
+      </select>
+      <select
+        value={minute}
+        onChange={e=>{
+          const nextMinute = e.target.value
+          setMinute(nextMinute)
+          emitValue(hour, nextMinute, period)
+        }}
+        style={selectStyle}
+      >
+        {minuteOptions.map(option=><option key={option} value={option}>{option}</option>)}
+      </select>
+      <select
+        value={period}
+        onChange={e=>{
+          const nextPeriod = e.target.value
+          setPeriod(nextPeriod)
+          emitValue(hour, minute, nextPeriod)
+        }}
+        style={selectStyle}
+      >
+        {["AM","PM"].map(option=><option key={option} value={option}>{option}</option>)}
+      </select>
+    </div>
+  )
+}
+
 /* -------------------------- SCHEDULE TAB -------------------------- */
 function ScheduleTab({ activeUser, currentUser, teamUsers = [], recurringWeeklySchedule = [], setRecurringWeeklySchedule, oneOffScheduleBlocks = [], setOneOffScheduleBlocks, tasks = [], setTasks, properties = [], clients = [], canAdd=true, canEdit=true, canDelete=true, canManagePermanent=false, fireNotif, onImmediateOneTimeAlert }) {
   const { isPhone: isMobile } = viewportInfo()
@@ -5904,10 +6445,10 @@ function ScheduleTab({ activeUser, currentUser, teamUsers = [], recurringWeeklyS
     const payload = { id: taskEditId || uid(), title: taskForm.title.trim(), detail: taskForm.detail.trim(), assignedUserId: taskForm.assignedUserId, propertyId: taskForm.propertyId || "", clientId: taskForm.clientId || "", dueDate: taskForm.dueDate, dueTime: taskForm.dueTime || "", priority: taskForm.priority || "Normal", status: taskForm.status || "To Do", createdAt: taskEditId ? (tasks.find(x=>x.id===taskEditId)?.createdAt || now()) : now() }
     setTasks(prev=> taskEditId ? prev.map(x=>x.id===taskEditId ? payload : x) : [payload, ...prev])
     if (!taskEditId && fireNotif) {
-      fireNotif("task", `New Task Assigned - ${payload.title}`, `Due ${payload.dueDate}${payload.dueTime ? ` at ${payload.dueTime}` : ""}.`, [payload.assignedUserId], `task:${payload.id}`)
+      fireNotif("task", `New Task Assigned - ${payload.title}`, `Due ${payload.dueDate}${payload.dueTime ? ` at ${displayTimeValue(payload.dueTime)}` : ""}.`, [payload.assignedUserId], `task:${payload.id}`)
     }
     if (taskEditId && fireNotif && editingTask && editingTask.assignedUserId!==payload.assignedUserId) {
-      fireNotif("task", `Task Reassigned - ${payload.title}`, `Due ${payload.dueDate}${payload.dueTime ? ` at ${payload.dueTime}` : ""}.`, [payload.assignedUserId], `task:${payload.id}`)
+      fireNotif("task", `Task Reassigned - ${payload.title}`, `Due ${payload.dueDate}${payload.dueTime ? ` at ${displayTimeValue(payload.dueTime)}` : ""}.`, [payload.assignedUserId], `task:${payload.id}`)
     }
     if (onImmediateOneTimeAlert) {
       onImmediateOneTimeAlert({
@@ -5915,7 +6456,7 @@ function ScheduleTab({ activeUser, currentUser, teamUsers = [], recurringWeeklyS
         eventKey: `task:${payload.id}`,
         type: "task",
         title: `${taskEditId ? "Task Updated" : "Task Assigned"} - ${payload.title}`,
-        body: `Due ${displayDate(payload.dueDate)}${payload.dueTime ? ` at ${payload.dueTime}` : ""}`
+        body: `Due ${displayDate(payload.dueDate)}${payload.dueTime ? ` at ${displayTimeValue(payload.dueTime)}` : ""}`
       })
     }
     setTaskEditId("")
@@ -5968,8 +6509,8 @@ function ScheduleTab({ activeUser, currentUser, teamUsers = [], recurringWeeklyS
           <div style={{display:"grid",gridTemplateColumns:isMobile?"1fr":"1.2fr 1fr 1fr 1fr 1fr 1.2fr 1.2fr auto",gap:sectionGap}}>
             <select value={oneOffForm.userId} onChange={e=>setOneOffForm(f=>({...f,userId:e.target.value}))} style={iStyle}><option value="">Select User</option>{teamUsers.map(u=><option key={u.id} value={u.id}>{u.name}</option>)}</select>
             <input type="date" value={oneOffForm.date} onChange={e=>setOneOffForm(f=>({...f,date:e.target.value}))} style={iStyle} />
-            <input value={oneOffForm.start} onChange={e=>setOneOffForm(f=>({...f,start:e.target.value}))} placeholder="8:00 AM" style={iStyle} />
-            <input value={oneOffForm.end} onChange={e=>setOneOffForm(f=>({...f,end:e.target.value}))} placeholder="5:00 PM" style={iStyle} />
+            <TimePicker value={oneOffForm.start} onChange={value=>setOneOffForm(f=>({...f,start:value}))} />
+            <TimePicker value={oneOffForm.end} onChange={value=>setOneOffForm(f=>({...f,end:value}))} />
             <select value={oneOffForm.type} onChange={e=>setOneOffForm(f=>({...f,type:e.target.value}))} style={iStyle}><option value="supplement">Supplement</option><option value="override">Override</option></select>
             <input value={oneOffForm.title} onChange={e=>setOneOffForm(f=>({...f,title:e.target.value}))} placeholder="Title" style={iStyle} />
             <input value={oneOffForm.detail} onChange={e=>setOneOffForm(f=>({...f,detail:e.target.value}))} placeholder="Detail" style={iStyle} />
@@ -5991,7 +6532,7 @@ function ScheduleTab({ activeUser, currentUser, teamUsers = [], recurringWeeklyS
                     <div style={{fontSize:11,color:"#9CA3AF",marginBottom:4}}>Schedule Blocks</div>
                     {row.blocks.length===0 ? <div style={{fontSize:11,color:"#4B5563",marginBottom:8}}>No blocks</div> : row.blocks.map(block=><div key={block.id} style={{display:"flex",justifyContent:"space-between",gap:8,background:"#111827",border:"1px solid #1F2937",borderRadius:6,padding:"6px 8px",marginBottom:6}}><div style={{fontSize:11,color:"#D1D5DB"}}>{block.start} - {block.end}</div><div style={{fontSize:11,color:block.source==="oneoff"?"#34D399":"#60A5FA"}}>{block.title || "Shift"}</div></div>)}
                     <div style={{fontSize:11,color:"#9CA3AF",marginBottom:4,marginTop:6}}>Due Tasks</div>
-                    {row.tasks.length===0 ? <div style={{fontSize:11,color:"#4B5563"}}>No tasks due today</div> : row.tasks.map(task=><div key={task.id} style={{background:"#111827",border:"1px solid #1F2937",borderRadius:6,padding:"6px 8px",marginBottom:6}}><div style={{fontSize:12,color:"#F9FAFB",fontWeight:600}}>{task.title}</div><div style={{fontSize:11,color:"#9CA3AF"}}>{task.priority} | {task.status}{task.dueTime ? ` | ${task.dueTime}` : ""}</div></div>)}
+                    {row.tasks.length===0 ? <div style={{fontSize:11,color:"#4B5563"}}>No tasks due today</div> : row.tasks.map(task=><div key={task.id} style={{background:"#111827",border:"1px solid #1F2937",borderRadius:6,padding:"6px 8px",marginBottom:6}}><div style={{fontSize:12,color:"#F9FAFB",fontWeight:600}}>{task.title}</div><div style={{fontSize:11,color:"#9CA3AF"}}>{task.priority} | {task.status}{task.dueTime ? ` | ${displayTimeValue(task.dueTime)}` : ""}</div></div>)}
                   </div>
                 ))}
               </div>
@@ -6035,7 +6576,7 @@ function ScheduleTab({ activeUser, currentUser, teamUsers = [], recurringWeeklyS
               <div style={{display:"grid",gridTemplateColumns:isMobile?"1fr":"repeat(5,minmax(0,1fr))",gap:sectionGap,marginBottom:sectionGap}}>
                 <select value={taskForm.assignedUserId} onChange={e=>setTaskForm(f=>({...f,assignedUserId:e.target.value}))} style={iStyle}><option value="">Assign User</option>{teamUsers.map(u=><option key={u.id} value={u.id}>{u.name}</option>)}</select>
                 <input type="date" value={taskForm.dueDate} onChange={e=>setTaskForm(f=>({...f,dueDate:e.target.value}))} style={iStyle} />
-                <input type="time" value={taskForm.dueTime} onChange={e=>setTaskForm(f=>({...f,dueTime:e.target.value}))} style={iStyle} />
+                <TimePicker value={taskForm.dueTime} onChange={value=>setTaskForm(f=>({...f,dueTime:value}))} allowEmpty storageFormat="24h" />
                 <select value={taskForm.priority} onChange={e=>setTaskForm(f=>({...f,priority:e.target.value}))} style={iStyle}>{["Low","Normal","High","Urgent"].map(p=><option key={p}>{p}</option>)}</select>
                 <select value={taskForm.status} onChange={e=>setTaskForm(f=>({...f,status:e.target.value}))} style={iStyle}>{["To Do","In Progress","Done"].map(s=><option key={s}>{s}</option>)}</select>
               </div>
@@ -6057,7 +6598,7 @@ function ScheduleTab({ activeUser, currentUser, teamUsers = [], recurringWeeklyS
               <input type="date" value={taskDateFilter} onChange={e=>setTaskDateFilter(e.target.value)} style={iStyle} />
               <button onClick={()=>{setTaskUserFilter("All");setTaskStatusFilter("All");setTaskPriorityFilter("All");setTaskDateFilter("")}} style={btnGray}>Reset</button>
             </div>
-            {filteredTasks.length===0 ? <div style={{fontSize:12,color:"#6B7280"}}>No tasks match these filters.</div> : <div style={{display:"flex",flexDirection:"column",gap:8}}>{filteredTasks.map(task=>{ const assigned = userMap[task.assignedUserId]; const linkedProp = properties.find(p=>p.id===task.propertyId); const linkedClient = clients.find(c=>c.id===task.clientId); const statusColor = task.status==="Done" ? "#34D399" : task.status==="In Progress" ? "#FBBF24" : "#60A5FA"; const priorityColor = task.priority==="Urgent" ? "#F87171" : task.priority==="High" ? "#FB923C" : task.priority==="Low" ? "#9CA3AF" : "#60A5FA"; return <div key={task.id} style={{background:"#0C1117",border:"1px solid #1F2937",borderRadius:8,padding:10}}><div style={{display:"flex",justifyContent:"space-between",gap:8,alignItems:"flex-start",flexWrap:"wrap"}}><div><div style={{fontSize:14,fontWeight:700,color:"#F9FAFB"}}>{task.title}</div><div style={{fontSize:11,color:"#9CA3AF"}}>{assigned?.name || "Unassigned"} | Due {formatDateLong(task.dueDate)} {task.dueTime || ""}</div></div><div style={{display:"flex",gap:6,alignItems:"center",flexWrap:"wrap"}}><span style={{fontSize:11,color:priorityColor,border:`1px solid ${priorityColor}`,borderRadius:12,padding:"1px 8px"}}>{task.priority}</span><select value={task.status} onChange={e=>updateTaskStatus(task.id, e.target.value)} style={{...iStyle,padding:"4px 8px",fontSize:11,width:110}} disabled={!canUpdateTaskStatus(task)}>{["To Do","In Progress","Done"].map(s=><option key={s}>{s}</option>)}</select>{(canManageTasks || canEdit) && <button onClick={()=>editTask(task)} style={{...btnBlue,padding:"4px 8px",fontSize:11}}>Edit</button>}{canDelete && <button onClick={()=>removeTask(task.id)} style={{...btnGray,padding:"4px 8px",fontSize:11,border:"1px solid #EF4444",color:"#FCA5A5"}}>Delete</button>}</div></div>{task.detail && <div style={{fontSize:12,color:"#D1D5DB",marginTop:6}}>{task.detail}</div>}<div style={{display:"flex",gap:10,flexWrap:"wrap",marginTop:6,fontSize:11,color:"#6B7280"}}><span style={{color:statusColor}}>Status: {task.status}</span>{linkedProp && <span>Job: {linkedProp.address}</span>}{linkedClient && <span>Client: {linkedClient.name}</span>}</div></div> })}</div>}
+            {filteredTasks.length===0 ? <div style={{fontSize:12,color:"#6B7280"}}>No tasks match these filters.</div> : <div style={{display:"flex",flexDirection:"column",gap:8}}>{filteredTasks.map(task=>{ const assigned = userMap[task.assignedUserId]; const linkedProp = properties.find(p=>p.id===task.propertyId); const linkedClient = clients.find(c=>c.id===task.clientId); const statusColor = task.status==="Done" ? "#34D399" : task.status==="In Progress" ? "#FBBF24" : "#60A5FA"; const priorityColor = task.priority==="Urgent" ? "#F87171" : task.priority==="High" ? "#FB923C" : task.priority==="Low" ? "#9CA3AF" : "#60A5FA"; return <div key={task.id} style={{background:"#0C1117",border:"1px solid #1F2937",borderRadius:8,padding:10}}><div style={{display:"flex",justifyContent:"space-between",gap:8,alignItems:"flex-start",flexWrap:"wrap"}}><div><div style={{fontSize:14,fontWeight:700,color:"#F9FAFB"}}>{task.title}</div><div style={{fontSize:11,color:"#9CA3AF"}}>{assigned?.name || "Unassigned"} | Due {formatDateLong(task.dueDate)}{task.dueTime ? ` ${displayTimeValue(task.dueTime)}` : ""}</div></div><div style={{display:"flex",gap:6,alignItems:"center",flexWrap:"wrap"}}><span style={{fontSize:11,color:priorityColor,border:`1px solid ${priorityColor}`,borderRadius:12,padding:"1px 8px"}}>{task.priority}</span><select value={task.status} onChange={e=>updateTaskStatus(task.id, e.target.value)} style={{...iStyle,padding:"4px 8px",fontSize:11,width:110}} disabled={!canUpdateTaskStatus(task)}>{["To Do","In Progress","Done"].map(s=><option key={s}>{s}</option>)}</select>{(canManageTasks || canEdit) && <button onClick={()=>editTask(task)} style={{...btnBlue,padding:"4px 8px",fontSize:11}}>Edit</button>}{canDelete && <button onClick={()=>removeTask(task.id)} style={{...btnGray,padding:"4px 8px",fontSize:11,border:"1px solid #EF4444",color:"#FCA5A5"}}>Delete</button>}</div></div>{task.detail && <div style={{fontSize:12,color:"#D1D5DB",marginTop:6}}>{task.detail}</div>}<div style={{display:"flex",gap:10,flexWrap:"wrap",marginTop:6,fontSize:11,color:"#6B7280"}}><span style={{color:statusColor}}>Status: {task.status}</span>{linkedProp && <span>Job: {linkedProp.address}</span>}{linkedClient && <span>Client: {linkedClient.name}</span>}</div></div> })}</div>}
           </div>
         </>
       )}
@@ -6070,8 +6611,8 @@ function ScheduleTab({ activeUser, currentUser, teamUsers = [], recurringWeeklyS
               <div style={{display:"grid",gridTemplateColumns:isMobile?"1fr":"1.2fr 1fr 1fr 1fr 2fr auto",gap:sectionGap}}>
                 <select value={recurringForm.userId} onChange={e=>setRecurringForm(f=>({...f,userId:e.target.value}))} style={iStyle}><option value="">Select User</option>{teamUsers.map(u=><option key={u.id} value={u.id}>{u.name}</option>)}</select>
                 <select value={recurringForm.day} onChange={e=>setRecurringForm(f=>({...f,day:e.target.value}))} style={iStyle}>{WEEK_DAYS.map(d=><option key={d}>{d}</option>)}</select>
-                <input value={recurringForm.start} onChange={e=>setRecurringForm(f=>({...f,start:e.target.value}))} placeholder="8:00 AM" style={iStyle} />
-                <input value={recurringForm.end} onChange={e=>setRecurringForm(f=>({...f,end:e.target.value}))} placeholder="5:00 PM" style={iStyle} />
+                <TimePicker value={recurringForm.start} onChange={value=>setRecurringForm(f=>({...f,start:value}))} />
+                <TimePicker value={recurringForm.end} onChange={value=>setRecurringForm(f=>({...f,end:value}))} />
                 <input value={recurringForm.note} onChange={e=>setRecurringForm(f=>({...f,note:e.target.value}))} placeholder="Optional note" style={iStyle} />
                 <button onClick={saveRecurring} style={btnBlue}>{recurringEditId ? "Save" : "Add"}</button>
               </div>
@@ -7123,7 +7664,7 @@ function BulkImportModal({ onClose, vendors, onImport }) {
 
 
 /* ========================== VENDOR TAB ========================== */
-function VendorTab({vendors,setVendors,canAdd=true,canEdit=true,canDelete=true}) {
+function VendorTab({vendors,setVendors,canAdd=true,canEdit=true,canDelete=true,onSaveVendor,onDeleteVendor}) {
   const { isPhone: isMobile } = viewportInfo()
   const blank={company:"",trade:CONTRACTOR_TRADES[0],contact:"",phone:"",email:"",license:"",notes:"",active:true}
 
@@ -7133,25 +7674,37 @@ function VendorTab({vendors,setVendors,canAdd=true,canEdit=true,canDelete=true})
   const [filter,setFilter]=useState("All")
   const denyAccess = () => window.alert("You currently have view-only access. Ask management or the CEO to assign your role and permissions.")
 
-  const save=()=>{
+  const save=async ()=>{
     if (!editing && !canAdd) { denyAccess(); return }
     if (editing && !canEdit) { denyAccess(); return }
     if(!form.company.trim()) return
     if(editing){
-      setVendors(prev=>prev.map(v=>v.id!==editing?v:{...v,...form}))
+      if (onSaveVendor) {
+        await onSaveVendor({ ...(vendors.find(v=>v.id===editing) || {}), ...form, id:editing })
+      } else {
+        setVendors(prev=>prev.map(v=>v.id!==editing?v:{...v,...form}))
+      }
       setEditing(null)
     } else {
       const idx=vendors.length
       const code=genCode(form.company,form.trade,idx)
-      setVendors(prev=>[...prev,{id:uid(),code,...form,createdAt:now()}])
+      if (onSaveVendor) {
+        await onSaveVendor({id:uid(),code,...form,createdAt:now()})
+      } else {
+        setVendors(prev=>[...prev,{id:uid(),code,...form,createdAt:now()}])
+      }
     }
     setForm(blank)
   }
 
-  const del=(id)=>{
+  const del=async (id)=>{
     if (!canDelete) { denyAccess(); return }
     if(!window.confirm("Remove this contractor from the index?\n\nAssigned jobs will keep their saved vendor IDs until manually updated.")) return
-    setVendors(v=>v.filter(x=>x.id!==id))
+    if (onDeleteVendor) {
+      await onDeleteVendor(id)
+    } else {
+      setVendors(v=>v.filter(x=>x.id!==id))
+    }
   }
 
   const edit=(v)=>{
@@ -7335,7 +7888,7 @@ function VendorTab({vendors,setVendors,canAdd=true,canEdit=true,canDelete=true})
 
 
 /* ========================== INSPECTOR TAB ========================== */
-function InspectorTab({inspectors,setInspectors,canAdd=true,canEdit=true,canDelete=true}) {
+function InspectorTab({inspectors,setInspectors,canAdd=true,canEdit=true,canDelete=true,onSaveInspector,onDeleteInspector}) {
   const { isPhone: isMobile } = viewportInfo()
 
   const blank={name:"",inspectorType:INSPECTOR_TYPES[0],agency:"",badge:"",phone:"",email:"",availability:"",certifications:"",notes:"",active:true}
@@ -7345,23 +7898,35 @@ function InspectorTab({inspectors,setInspectors,canAdd=true,canEdit=true,canDele
   const [search,setSearch]=useState("")
   const denyAccess = () => window.alert("You currently have view-only access. Ask management or the CEO to assign your role and permissions.")
 
-  const save=()=>{
+  const save=async ()=>{
     if (!editing && !canAdd) { denyAccess(); return }
     if (editing && !canEdit) { denyAccess(); return }
     if(!form.name.trim()) return
     if(editing){
-      setInspectors(prev=>prev.map(ins=>ins.id!==editing?ins:{...ins,...form}))
+      if (onSaveInspector) {
+        await onSaveInspector({ ...(inspectors.find(ins=>ins.id===editing) || {}), ...form, id:editing })
+      } else {
+        setInspectors(prev=>prev.map(ins=>ins.id!==editing?ins:{...ins,...form}))
+      }
       setEditing(null)
     } else {
-      setInspectors(prev=>[...prev,{id:uid(),...form,createdAt:now()}])
+      if (onSaveInspector) {
+        await onSaveInspector({id:uid(),...form,createdAt:now()})
+      } else {
+        setInspectors(prev=>[...prev,{id:uid(),...form,createdAt:now()}])
+      }
     }
     setForm(blank)
   }
 
-  const del=(id)=>{
+  const del=async (id)=>{
     if (!canDelete) { denyAccess(); return }
     if(!window.confirm("Remove this inspector profile?")) return
-    setInspectors(v=>v.filter(x=>x.id!==id))
+    if (onDeleteInspector) {
+      await onDeleteInspector(id)
+    } else {
+      setInspectors(v=>v.filter(x=>x.id!==id))
+    }
   }
 
   const edit=(ins)=>{
