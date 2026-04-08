@@ -674,6 +674,7 @@ const DOCUMENT_DB_VERSION = 1
 const DOCUMENT_STORE_NAME = "documentPayloads"
 const MAX_DOCUMENT_PERSIST_BYTES = 10 * 1024 * 1024
 const STORAGE_ERROR_COOLDOWN_MS = 4000
+const SPLASH_MIN_DURATION_MS = 4000
 const DEVICE_SESSION_STORAGE_KEY = "hcg-device-session"
 const storageErrorTimestamps = new Map()
 const normalizeDocumentRecord = (doc = {}) => ({
@@ -1984,6 +1985,7 @@ export default function JLCMSApp() {
   const [chatPeerPref, setChatPeerPref] = useState("")
   const [selectedInvoiceId, setSelectedInvoiceId] = useState("")
   const [authLoaded,   setAuthLoaded]   = useState(false)
+  const [splashReady,  setSplashReady]  = useState(false)
   const [needsInitialSetup, setNeedsInitialSetup] = useState(false)
   const [lastSavedAt,  setLastSavedAt]  = useState("")
   const [shownOneTimeNotifications, setShownOneTimeNotifications] = useState({})
@@ -1995,6 +1997,13 @@ export default function JLCMSApp() {
   const workspaceLoadedRef = useRef(false)
   const workspaceTeamIdRef = useRef("")
   const syncedPropertyIdsRef = useRef([])
+
+  useEffect(() => {
+    const timeoutId = window.setTimeout(() => {
+      setSplashReady(true)
+    }, SPLASH_MIN_DURATION_MS)
+    return () => window.clearTimeout(timeoutId)
+  }, [])
 
   const persistUserRecord = useCallback(async (userRecord) => {
     const workspace = await getOrCreateWorkspaceTeam()
@@ -3595,7 +3604,7 @@ export default function JLCMSApp() {
     }
   }, [notifPanel])
 
-  if (!authLoaded) {
+  if (!authLoaded || !splashReady) {
     return <SplashScreen />
   }
 
