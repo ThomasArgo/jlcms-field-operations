@@ -1607,9 +1607,8 @@ const getStoredDeviceSession = () => {
     const parsed = safeParseJSON(raw, null)
     if (!parsed || typeof parsed !== "object") return null
     const userId = String(parsed.userId || "").trim()
-    const sessionId = String(parsed.sessionId || "").trim()
-    if (!userId || !sessionId) return null
-    return { userId, sessionId }
+    if (!userId) return null
+    return { userId }
   } catch (error) {
     return null
   }
@@ -1617,13 +1616,12 @@ const getStoredDeviceSession = () => {
 const storeDeviceSession = (session) => {
   if (typeof window === "undefined" || !window.localStorage) return
   try {
-    if (!session?.userId || !session?.sessionId) {
+    if (!session?.userId) {
       window.localStorage.removeItem(DEVICE_SESSION_STORAGE_KEY)
       return
     }
     window.localStorage.setItem(DEVICE_SESSION_STORAGE_KEY, JSON.stringify({
-      userId: String(session.userId || "").trim(),
-      sessionId: String(session.sessionId || "").trim()
+      userId: String(session.userId || "").trim()
     }))
   } catch (error) {}
 }
@@ -2261,7 +2259,7 @@ export default function JLCMSApp() {
         setInspectors(initialInspectors)
         const storedSession = getStoredDeviceSession()
         const restoredUser = storedSession
-          ? normalizedUsers.find(user => user.id===storedSession.userId && String(user.activeSessionId || "")===storedSession.sessionId)
+          ? normalizedUsers.find(user => user.id===storedSession.userId)
           : null
         if (!restoredUser && storedSession) clearStoredDeviceSession()
         setCurrentUser(restoredUser || null)
@@ -2685,7 +2683,7 @@ export default function JLCMSApp() {
     const nextUser = { ...found, activeSessionId:sessionId, lastLoginAt:loginAt }
     setUsers(prev=>prev.map(u=>u.id!==found.id?u:nextUser))
     setCurrentUser(nextUser)
-    storeDeviceSession({ userId: nextUser.id, sessionId })
+    storeDeviceSession({ userId: nextUser.id })
     persistUserRecord(nextUser).catch(error => {
       console.error("Supabase user login sync failed.", error)
     })
@@ -2728,7 +2726,7 @@ export default function JLCMSApp() {
     setTeams([nextTeam])
     setCurrentUser(nextUser)
     setNeedsInitialSetup(false)
-    storeDeviceSession({ userId: nextUser.id, sessionId })
+    storeDeviceSession({ userId: nextUser.id })
     persistUserRecord(nextUser).catch(error => {
       console.error("Supabase admin user create failed.", error)
     })
@@ -2777,7 +2775,7 @@ export default function JLCMSApp() {
       ]
     }))
     setCurrentUser(nextUser)
-    storeDeviceSession({ userId: nextUser.id, sessionId })
+    storeDeviceSession({ userId: nextUser.id })
     persistUserRecord(nextUser).catch(error => {
       console.error("Supabase signup user create failed.", error)
     })
@@ -3521,11 +3519,6 @@ export default function JLCMSApp() {
       clearStoredDeviceSession()
       return
     }
-    if ((fresh.activeSessionId || null) !== (currentUser.activeSessionId || null)) {
-      setCurrentUser(null)
-      clearStoredDeviceSession()
-      return
-    }
     if (
       fresh.approved !== currentUser.approved ||
       fresh.name !== currentUser.name ||
@@ -3540,9 +3533,9 @@ export default function JLCMSApp() {
   }, [users, currentUser])
 
   useEffect(() => {
-    if (!currentUser?.id || !currentUser?.activeSessionId) return
-    storeDeviceSession({ userId: currentUser.id, sessionId: currentUser.activeSessionId })
-  }, [currentUser?.id, currentUser?.activeSessionId])
+    if (!currentUser?.id) return
+    storeDeviceSession({ userId: currentUser.id })
+  }, [currentUser?.id])
 
   useEffect(() => {
     if (currentUser?.id) setActiveUser(currentUser.id)
