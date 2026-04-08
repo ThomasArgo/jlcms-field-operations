@@ -193,6 +193,8 @@ const NOTIFICATION_KIND = {
   late: "late",
   direct: "direct"
 }
+const REMINDER_WINDOW_MS = 2 * 60 * 1000
+const LATE_REMINDER_DELAY_MS = 10 * 60 * 1000
 
 
 /* -- Helpers -- */
@@ -2074,6 +2076,7 @@ export default function JLCMSApp() {
   const firedRef = useRef(new Set())
   const notificationsRef = useRef([])
   const notificationLedgerRef = useRef({})
+  const deliveredToastIdsRef = useRef(new Set())
   const propsLoadedRef = useRef(false)
   const workspaceLoadedRef = useRef(false)
   const workspaceTeamIdRef = useRef("")
@@ -2427,16 +2430,30 @@ export default function JLCMSApp() {
           fetchUsersFromSupabase()
         ])
         if (cancelled) return
+        const remoteData = remoteState?.data || {}
         const remoteUsers = (remoteUsersPayload || []).map(fromSupabaseUserPayload)
+        const applyRemoteWorkspaceState = (normalizedUserList) => {
+          const remoteMessages = sanitizeMessages(Array.isArray(remoteData?.messages) ? remoteData.messages : [], normalizedUserList)
+          const remoteTasks = Array.isArray(remoteData?.tasks) ? remoteData.tasks : []
+          const remoteOneOff = Array.isArray(remoteData?.oneOffScheduleBlocks) ? remoteData.oneOffScheduleBlocks : []
+          const remoteRecurring = Array.isArray(remoteData?.recurringWeeklySchedule) ? remoteData.recurringWeeklySchedule : []
+          const remoteNotifications = Array.isArray(remoteData?.notifications) ? remoteData.notifications.map(normalizeNotificationRecord) : []
+          const remoteLedger = normalizeNotificationLedger(remoteData?.notificationLedger || remoteData?.shownOneTimeNotifications || {})
+
+          setMessages(prev => JSON.stringify(prev)===JSON.stringify(remoteMessages) ? prev : remoteMessages)
+          setTasks(prev => JSON.stringify(prev)===JSON.stringify(remoteTasks) ? prev : remoteTasks)
+          setOneOffScheduleBlocks(prev => JSON.stringify(prev)===JSON.stringify(remoteOneOff) ? prev : remoteOneOff)
+          setRecurringWeeklySchedule(prev => JSON.stringify(prev)===JSON.stringify(remoteRecurring) ? prev : remoteRecurring)
+          setNotifications(prev => JSON.stringify(prev)===JSON.stringify(remoteNotifications) ? prev : remoteNotifications)
+          setNotificationLedger(prev => JSON.stringify(prev)===JSON.stringify(remoteLedger) ? prev : remoteLedger)
+        }
         if (remoteUsers.length) {
           const normalizedRemoteUsers = buildSingleCompanyAuthState(remoteUsers, teams).normalizedUsers
           setUsers(prev => JSON.stringify(prev)===JSON.stringify(normalizedRemoteUsers) ? prev : normalizedRemoteUsers)
-          const remoteMessages = sanitizeMessages(Array.isArray(remoteState?.data?.messages) ? remoteState.data.messages : [], normalizedRemoteUsers)
-          setMessages(prev => JSON.stringify(prev)===JSON.stringify(remoteMessages) ? prev : remoteMessages)
+          applyRemoteWorkspaceState(normalizedRemoteUsers)
           return
         }
-        const remoteMessages = sanitizeMessages(Array.isArray(remoteState?.data?.messages) ? remoteState.data.messages : [], users)
-        setMessages(prev => JSON.stringify(prev)===JSON.stringify(remoteMessages) ? prev : remoteMessages)
+        applyRemoteWorkspaceState(users)
       } catch (error) {
         console.error("Supabase workspace realtime sync failed.", error)
       }
@@ -2514,12 +2531,6 @@ export default function JLCMSApp() {
       eventKey:key
     })
     setNotifications(prev=>[notif,...prev.slice(0,99)])
-
-
-    // In-app toast
-    const toast = { id:uid(), type, title, body, recipients:finalRecipients, eventKey:key }
-    setToasts(prev=>[...prev, toast])
-    setTimeout(()=>setToasts(prev=>prev.filter(t=>t.id!==toast.id)), 6000)
 
 
     // Browser push - only if current user is a recipient
@@ -2603,7 +2614,7 @@ export default function JLCMSApp() {
       if (notification.eventKey) eventKeys.push(notification.eventKey)
       return { ...notification, read:true, readBy:nextReadBy, dismissedBy:nextDismissedBy }
     }))
-    setToasts(prev => prev.filter(toast => !(toast.recipients || []).includes(cleanUserId) || !idSet.has(String(toast.id || "").trim())))
+    setToasts(prev => prev.filter(toast => !(toast.recipients || []).includes(cleanUserId) || !idSet.has(String(toast.notificationId || "").trim())))
     if (eventKeys.length) updateNotificationLedger(cleanUserId, eventKeys, { seenAt:stamp, dismissedAt:stamp })
   }, [updateNotificationLedger])
   const clearNotificationsForUser = useCallback((userId) => {
@@ -2636,53 +2647,11 @@ export default function JLCMSApp() {
         })
       })
 
-    tasks
-      .filter(task => task.assignedUserId === cleanUserId && String(task.status || "To Do") !== "Done")
-      .forEach(task => {
-        const assignmentStamp = task.assignmentUpdatedAt || task.updatedAt || task.createdAt || task.id
-        const eventKey = ["task_assignment", cleanUserId, task.id, assignmentStamp].join(":")
-        pendingNotifications.push({
-          userId: cleanUserId,
-          eventKey,
-          type: "task",
-          title: `Task Assigned - ${task.title || "Untitled Task"}`,
-          body: `${task.assignedByName ? `Assigned by ${task.assignedByName}. ` : ""}Due ${displayDate(task.dueDate)}${task.dueTime ? ` at ${displayTimeValue(task.dueTime)}` : ""}${task.priority ? ` | ${task.priority}` : ""}${task.detail ? ` | ${previewText(task.detail)}` : ""}`
-        })
-      })
-
-    oneOffScheduleBlocks
-      .filter(entry => entry.userId === cleanUserId && (!entry.date || entry.date >= getTodayDateInput()))
-      .forEach(entry => {
-        const assignmentStamp = entry.updatedAt || entry.createdAt || entry.id
-        const eventKey = ["schedule_assignment", "oneoff", cleanUserId, entry.id, assignmentStamp].join(":")
-        pendingNotifications.push({
-          userId: cleanUserId,
-          eventKey,
-          type: "schedule",
-          title: `Schedule Added - ${entry.title || "One-Off Block"}`,
-          body: `${displayDate(entry.date)} | ${entry.start || "08:00 AM"} - ${entry.end || "05:00 PM"}`
-        })
-      })
-
-    recurringWeeklySchedule
-      .filter(entry => entry.userId === cleanUserId)
-      .forEach(entry => {
-        const assignmentStamp = entry.updatedAt || entry.createdAt || entry.id
-        const eventKey = ["schedule_assignment", "recurring", cleanUserId, entry.id, assignmentStamp].join(":")
-        pendingNotifications.push({
-          userId: cleanUserId,
-          eventKey,
-          type: "schedule",
-          title: `Recurring Schedule Added - ${entry.day || "Schedule"}`,
-          body: `${entry.start || "08:00 AM"} - ${entry.end || "05:00 PM"}${entry.note ? ` | ${entry.note}` : ""}`
-        })
-      })
-
     if (!pendingNotifications.length) return
     pendingNotifications.forEach(item => {
       enqueueUserNotification(item)
     })
-  }, [currentUser?.approved, currentUser?.id, enqueueUserNotification, messages, oneOffScheduleBlocks, recurringWeeklySchedule, tasks])
+  }, [currentUser?.approved, currentUser?.id, enqueueUserNotification, messages])
 
 
   /* ---- Schedule checker ---- */
@@ -2721,8 +2690,7 @@ export default function JLCMSApp() {
       const titleBase = block.title || "Shift"
       const dateLabel = displayDate(localDate)
       const reminderAt = new Date(startAt.getTime() - 10 * 60000)
-      const lateAt = new Date(startAt.getTime() + 10 * 60000)
-      if (now_ >= reminderAt && now_ < startAt) {
+      if (now_ >= reminderAt && now_.getTime() <= reminderAt.getTime() + REMINDER_WINDOW_MS) {
         enqueueUserNotification({
           userId: block.userId,
           eventKey: buildPlannerNotificationKey({ userId:block.userId, itemType:block.source==="oneoff" ? "oneoff_schedule" : "recurring_schedule", itemId:block.id, occurrenceDate:localDate, occurrenceTime:formatTime24Hour(block.start), kind:NOTIFICATION_KIND.reminder10 }),
@@ -2731,7 +2699,7 @@ export default function JLCMSApp() {
           body: `${dateLabel} | ${formatOccurrenceTimeLabel(block.start)} - ${formatOccurrenceTimeLabel(block.end, "End of block")}`
         })
       }
-      if (now_ >= startAt && now_ < lateAt) {
+      if (now_ >= startAt && now_.getTime() <= startAt.getTime() + REMINDER_WINDOW_MS) {
         enqueueUserNotification({
           userId: block.userId,
           eventKey: buildPlannerNotificationKey({ userId:block.userId, itemType:block.source==="oneoff" ? "oneoff_schedule" : "recurring_schedule", itemId:block.id, occurrenceDate:localDate, occurrenceTime:formatTime24Hour(block.start), kind:NOTIFICATION_KIND.startsNow }),
@@ -2751,10 +2719,10 @@ export default function JLCMSApp() {
         const dueAt = getDateTimeForOccurrence(task.dueDate, task.dueTime, "end")
         if (!dueAt) return
         const reminderAt = new Date(dueAt.getTime() - 10 * 60000)
-        const lateAt = new Date(dueAt.getTime() + 10 * 60000)
+        const lateAt = new Date(dueAt.getTime() + LATE_REMINDER_DELAY_MS)
         const occurrenceTime = formatTime24Hour(task.dueTime)
         const body = `Due ${displayDate(task.dueDate)} at ${formatOccurrenceTimeLabel(task.dueTime)}${task.detail ? ` | ${task.detail}` : ""}`
-        if (now_ >= reminderAt && now_ < dueAt) {
+        if (now_ >= reminderAt && now_.getTime() <= reminderAt.getTime() + REMINDER_WINDOW_MS) {
           enqueueUserNotification({
             userId: task.assignedUserId,
             eventKey: buildPlannerNotificationKey({ userId:task.assignedUserId, itemType:"task", itemId:task.id, occurrenceDate:task.dueDate, occurrenceTime, kind:NOTIFICATION_KIND.reminder10 }),
@@ -2763,7 +2731,7 @@ export default function JLCMSApp() {
             body
           })
         }
-        if (now_ >= dueAt && now_ < lateAt) {
+        if (now_ >= dueAt && now_.getTime() <= dueAt.getTime() + REMINDER_WINDOW_MS) {
           enqueueUserNotification({
             userId: task.assignedUserId,
             eventKey: buildPlannerNotificationKey({ userId:task.assignedUserId, itemType:"task", itemId:task.id, occurrenceDate:task.dueDate, occurrenceTime, kind:NOTIFICATION_KIND.dueNow }),
@@ -2772,7 +2740,7 @@ export default function JLCMSApp() {
             body
           })
         }
-        if (now_ >= lateAt) {
+        if (now_ >= lateAt && now_.getTime() <= lateAt.getTime() + REMINDER_WINDOW_MS) {
           enqueueUserNotification({
             userId: task.assignedUserId,
             eventKey: buildPlannerNotificationKey({ userId:task.assignedUserId, itemType:"task", itemId:task.id, occurrenceDate:task.dueDate, occurrenceTime, kind:NOTIFICATION_KIND.late }),
@@ -3724,12 +3692,54 @@ export default function JLCMSApp() {
   }, [currentUser?.id])
 
   useEffect(() => {
+    if (!authLoaded || !currentUser?.id) return
+    const visibleIds = notificationsRef.current
+      .filter(notification => (notification.recipients || []).includes(currentUser.id))
+      .map(notification => String(notification.id || "").trim())
+      .filter(Boolean)
+    deliveredToastIdsRef.current = new Set(visibleIds)
+  }, [authLoaded, currentUser?.id])
+
+  useEffect(() => {
     notificationsRef.current = notifications
   }, [notifications])
 
   useEffect(() => {
     notificationLedgerRef.current = notificationLedger
   }, [notificationLedger])
+
+  useEffect(() => {
+    if (!activeUser) return
+    const incoming = notifications
+      .filter(notification => {
+        const notificationId = String(notification.id || "").trim()
+        if (!notificationId || !(notification.recipients || []).includes(activeUser)) return false
+        if (deliveredToastIdsRef.current.has(notificationId)) return false
+        if (isNotificationDismissedForUser(notification, activeUser) || isNotificationReadForUser(notification, activeUser)) return false
+        return true
+      })
+      .map(normalizeNotificationRecord)
+
+    if (!incoming.length) return
+
+    incoming.forEach(notification => {
+      const notificationId = String(notification.id || "").trim()
+      deliveredToastIdsRef.current.add(notificationId)
+      const toast = {
+        id: `toast-${notificationId}`,
+        notificationId,
+        type: notification.type,
+        title: notification.title,
+        body: notification.body,
+        recipients: notification.recipients,
+        eventKey: notification.eventKey
+      }
+      setToasts(prev => prev.some(item => item.notificationId===notificationId) ? prev : [...prev, toast])
+      window.setTimeout(() => {
+        setToasts(prev => prev.filter(item => item.notificationId!==notificationId))
+      }, 6000)
+    })
+  }, [notifications, activeUser])
 
   useEffect(() => {
     if (!users.length) return
@@ -3984,7 +3994,10 @@ export default function JLCMSApp() {
               </div>
               <div style={{fontSize:12,color:"#9CA3AF",lineHeight:1.4}}>{cleanUiText(t.body)}</div>
               <div style={{display:"flex",justifyContent:"flex-end",marginTop:8}}>
-                <button onClick={()=>setToasts(prev=>prev.filter(toast=>toast.id!==t.id))} style={{...btnGray,fontSize:10,padding:"3px 8px"}}>Dismiss</button>
+                <button onClick={()=>{
+                  if (t.notificationId) dismissNotificationsForUser(activeUser, [t.notificationId])
+                  else setToasts(prev=>prev.filter(toast=>toast.id!==t.id))
+                }} style={{...btnGray,fontSize:10,padding:"3px 8px"}}>Dismiss</button>
               </div>
             </div>
           )
