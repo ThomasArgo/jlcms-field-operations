@@ -185,6 +185,15 @@ const NOTIF_TYPES = {
   invoice:   { color:"#A78BFA", icon:"INV", label:"Invoice"    },
 }
 
+const NOTIFICATION_KIND = {
+  assignment: "assignment",
+  reminder10: "reminder_10_min",
+  dueNow: "due_now",
+  startsNow: "starts_now",
+  late: "late",
+  direct: "direct"
+}
+
 
 /* -- Helpers -- */
 const uid      = () => Math.random().toString(36).slice(2,10)
@@ -498,6 +507,77 @@ const displayDateTime = (value) => {
     hour:"numeric",
     minute:"2-digit"
   })
+}
+const getLocalDateKey = (date = new Date()) =>
+  new Date(date.getTime() - date.getTimezoneOffset() * 60000).toISOString().slice(0, 10)
+const getDateTimeForOccurrence = (dateIso, timeStr, fallback = "start") => {
+  const normalizedDate = normalizeDateInput(dateIso)
+  if (!normalizedDate) return null
+  const [year, month, day] = normalizedDate.split("-").map(Number)
+  const parsed = parseTimeValue(timeStr)
+  const hour = parsed ? parsed.hour24 : (fallback==="end" ? 23 : 0)
+  const minute = parsed ? parsed.minute : (fallback==="end" ? 59 : 0)
+  const second = parsed ? 0 : (fallback==="end" ? 59 : 0)
+  const date = new Date(year, month - 1, day, hour, minute, second, 0)
+  return Number.isNaN(date.getTime()) ? null : date
+}
+const formatOccurrenceTimeLabel = (timeStr, fallbackLabel = "Any time") => displayTimeValue(timeStr) || fallbackLabel
+const buildPlannerNotificationKey = ({ userId, itemType, itemId, occurrenceDate, occurrenceTime = "", kind }) =>
+  ["planner", String(userId || "").trim(), String(itemType || "").trim(), String(itemId || "").trim(), String(occurrenceDate || "").trim(), String(occurrenceTime || "none").trim(), String(kind || "").trim()].join(":")
+const normalizeNotificationLedger = (rawLedger = {}) => {
+  if (!rawLedger || typeof rawLedger !== "object") return {}
+  return Object.fromEntries(
+    Object.entries(rawLedger).map(([userId, events]) => {
+      const normalizedEvents = Object.fromEntries(
+        Object.entries(events || {}).map(([eventKey, entry]) => {
+          if (entry && typeof entry === "object" && !Array.isArray(entry)) {
+            return [eventKey, {
+              createdAt: String(entry.createdAt || entry.shownAt || entry.seenAt || entry.dismissedAt || "").trim(),
+              shownAt: String(entry.shownAt || entry.createdAt || "").trim(),
+              seenAt: String(entry.seenAt || "").trim(),
+              dismissedAt: String(entry.dismissedAt || "").trim(),
+              clearedAt: String(entry.clearedAt || "").trim()
+            }]
+          }
+          const stamp = typeof entry === "string" ? entry.trim() : ""
+          return [eventKey, { createdAt: stamp, shownAt: stamp, seenAt: "", dismissedAt: "", clearedAt: "" }]
+        }).filter(([eventKey]) => String(eventKey || "").trim())
+      )
+      return [String(userId || "").trim(), normalizedEvents]
+    }).filter(([userId]) => userId)
+  )
+}
+const normalizeNotificationRecord = (notification = {}) => {
+  const recipients = [...new Set((notification?.recipients || []).map(id => String(id || "").trim()).filter(Boolean))]
+  const readBy = Array.isArray(notification?.readBy)
+    ? [...new Set(notification.readBy.map(id => String(id || "").trim()).filter(Boolean))]
+    : (notification?.read ? recipients.slice() : [])
+  const dismissedBy = Array.isArray(notification?.dismissedBy)
+    ? [...new Set(notification.dismissedBy.map(id => String(id || "").trim()).filter(Boolean))]
+    : []
+  return {
+    id: String(notification?.id || uid()).trim(),
+    type: String(notification?.type || "schedule").trim(),
+    title: String(notification?.title || "").trim(),
+    body: String(notification?.body || "").trim(),
+    recipients,
+    time: String(notification?.time || now()).trim(),
+    read: !!notification?.read,
+    readBy,
+    dismissedBy,
+    eventKey: String(notification?.eventKey || "").trim()
+  }
+}
+const isNotificationReadForUser = (notification, userId) => {
+  const cleanUserId = String(userId || "").trim()
+  if (!cleanUserId) return false
+  if (Array.isArray(notification?.readBy) && notification.readBy.includes(cleanUserId)) return true
+  return !!notification?.read && (notification?.recipients || []).includes(cleanUserId)
+}
+const isNotificationDismissedForUser = (notification, userId) => {
+  const cleanUserId = String(userId || "").trim()
+  if (!cleanUserId) return false
+  return Array.isArray(notification?.dismissedBy) && notification.dismissedBy.includes(cleanUserId)
 }
 const TIMESTAMP_FIELD_KEYS = [
   "ticket811VerifiedAt",
@@ -1584,7 +1664,7 @@ const buildWorkspaceSnapshotPayload = ({
   teams = [],
   messages = [],
   notifications = [],
-  shownOneTimeNotifications = {},
+  notificationLedger = {},
   lastSavedAt = ""
 } = {}) => ({
   props: (props || []).map(normalizeProp),
@@ -1596,8 +1676,9 @@ const buildWorkspaceSnapshotPayload = ({
   users: Array.isArray(users) ? users : [],
   teams: Array.isArray(teams) ? teams : [],
   messages: Array.isArray(messages) ? messages : [],
-  notifications: Array.isArray(notifications) ? notifications.slice(0, 100) : [],
-  shownOneTimeNotifications: shownOneTimeNotifications || {},
+  notifications: Array.isArray(notifications) ? notifications.map(normalizeNotificationRecord).slice(0, 100) : [],
+  notificationLedger: normalizeNotificationLedger(notificationLedger),
+  shownOneTimeNotifications: normalizeNotificationLedger(notificationLedger),
   lastSavedAt: String(lastSavedAt || "").trim()
 })
 const getStoredDeviceSession = () => {
@@ -1986,11 +2067,13 @@ export default function JLCMSApp() {
   const [splashReady,  setSplashReady]  = useState(false)
   const [needsInitialSetup, setNeedsInitialSetup] = useState(false)
   const [lastSavedAt,  setLastSavedAt]  = useState("")
-  const [shownOneTimeNotifications, setShownOneTimeNotifications] = useState({})
+  const [notificationLedger, setNotificationLedger] = useState({})
   const [resetPasswordTarget, setResetPasswordTarget] = useState(null)
   const [resetPasswordForm, setResetPasswordForm] = useState({ password:"", confirmPassword:"" })
   const [resetPasswordError, setResetPasswordError] = useState("")
   const firedRef = useRef(new Set())
+  const notificationsRef = useRef([])
+  const notificationLedgerRef = useRef({})
   const propsLoadedRef = useRef(false)
   const workspaceLoadedRef = useRef(false)
   const workspaceTeamIdRef = useRef("")
@@ -2247,12 +2330,12 @@ export default function JLCMSApp() {
         setTasks(Array.isArray(snapshot?.tasks) ? snapshot.tasks : [])
         setOneOffScheduleBlocks(Array.isArray(snapshot?.oneOffScheduleBlocks) ? snapshot.oneOffScheduleBlocks : [])
         setRecurringWeeklySchedule(Array.isArray(snapshot?.recurringWeeklySchedule) ? snapshot.recurringWeeklySchedule : [])
-        setNotifications(Array.isArray(snapshot?.notifications) ? snapshot.notifications : [])
+        setNotifications(Array.isArray(snapshot?.notifications) ? snapshot.notifications.map(normalizeNotificationRecord) : [])
         setUsers(normalizedUsers)
         setTeams(normalizedTeams)
         setNeedsInitialSetup(normalizedUsers.length===0)
         setMessages(sanitizeMessages(Array.isArray(snapshot?.messages) ? snapshot.messages : [], normalizedUsers))
-        setShownOneTimeNotifications(snapshot?.shownOneTimeNotifications || {})
+        setNotificationLedger(normalizeNotificationLedger(snapshot?.notificationLedger || snapshot?.shownOneTimeNotifications || {}))
         setLastSavedAt(String(snapshot?.lastSavedAt || remoteState?.updated_at || "").trim())
         setClients(initialClients)
         setVendors(initialVendors)
@@ -2295,7 +2378,7 @@ export default function JLCMSApp() {
       teams,
       messages: sanitizeMessages(messages, users),
       notifications,
-      shownOneTimeNotifications,
+      notificationLedger,
       lastSavedAt: savedAt
     })
 
@@ -2316,7 +2399,7 @@ export default function JLCMSApp() {
     teams,
     messages,
     notifications,
-    shownOneTimeNotifications
+    notificationLedger
   ])
   useEffect(() => {
     if (!authLoaded || !workspaceLoadedRef.current || !workspaceTeamIdRef.current) return
@@ -2396,9 +2479,6 @@ export default function JLCMSApp() {
   /* ---- Fire notification ---- */
   const fireNotif = useCallback((type, title, body, recipients, dedupeKey = "") => {
     const key = dedupeKey || `${type}-${title}-${new Date().toDateString()}`
-    if (firedRef.current.has(key)) return
-    firedRef.current.add(key)
-
     const teamRecipients = users.filter(u=>u.approved && u.teamId===currentUser?.teamId).map(u=>u.id)
     const normalizedRecipients = (recipients || [])
       .map(r => {
@@ -2411,12 +2491,33 @@ export default function JLCMSApp() {
       })
       .filter(Boolean)
     const finalRecipients = normalizedRecipients.length ? normalizedRecipients : teamRecipients
-    const notif = { id:uid(), type, title, body, recipients:finalRecipients, time:now(), read:false }
+    if (!finalRecipients.length) return
+    const alreadyExists = notificationsRef.current.some(notification => {
+      if (!key || !notification?.eventKey) return false
+      const sameKey = notification.eventKey===key
+      const overlapsRecipients = finalRecipients.some(recipient => (notification.recipients || []).includes(recipient))
+      return sameKey && overlapsRecipients
+    })
+    if (firedRef.current.has(key) || alreadyExists) return
+    firedRef.current.add(key)
+
+    const notif = normalizeNotificationRecord({
+      id:uid(),
+      type,
+      title,
+      body,
+      recipients:finalRecipients,
+      time:now(),
+      read:false,
+      readBy:[],
+      dismissedBy:[],
+      eventKey:key
+    })
     setNotifications(prev=>[notif,...prev.slice(0,99)])
 
 
     // In-app toast
-    const toast = { id:uid(), type, title, body, recipients:finalRecipients }
+    const toast = { id:uid(), type, title, body, recipients:finalRecipients, eventKey:key }
     setToasts(prev=>[...prev, toast])
     setTimeout(()=>setToasts(prev=>prev.filter(t=>t.id!==toast.id)), 6000)
 
@@ -2426,46 +2527,106 @@ export default function JLCMSApp() {
       sendPushNotification(`${HCG_COMPANY_NAME}: ${title}`, body)
     }
   },[pushEnabled, activeUser, users, currentUser?.teamId])
-  const markOneTimeNotificationsShown = useCallback((userId, eventKeys = []) => {
+  const updateNotificationLedger = useCallback((userId, eventKeys = [], patch = {}) => {
     const cleanUserId = String(userId || "").trim()
     const cleanKeys = [...new Set((eventKeys || []).map(key => String(key || "").trim()).filter(Boolean))]
     if (!cleanUserId || !cleanKeys.length) return
-    setShownOneTimeNotifications(prev => {
+    setNotificationLedger(prev => {
       const currentUserLedger = prev?.[cleanUserId] || {}
       const nextUserLedger = { ...currentUserLedger }
       let changed = false
       cleanKeys.forEach(key => {
-        if (nextUserLedger[key]) return
-        nextUserLedger[key] = now()
+        const existing = nextUserLedger[key] || { createdAt:"", shownAt:"", seenAt:"", dismissedAt:"", clearedAt:"" }
+        const nextEntry = {
+          ...existing,
+          ...patch
+        }
+        if (JSON.stringify(existing)===JSON.stringify(nextEntry)) return
+        nextUserLedger[key] = nextEntry
         changed = true
       })
       return changed ? { ...prev, [cleanUserId]: nextUserLedger } : prev
     })
   }, [])
-  const notifyCurrentUserOneTimeEvent = useCallback(({ userId, eventKey, type, title, body }) => {
+  const enqueueUserNotification = useCallback(({ userId, eventKey, type, title, body }) => {
     const cleanUserId = String(userId || "").trim()
     const cleanEventKey = String(eventKey || "").trim()
-    if (!cleanUserId || !cleanEventKey || currentUser?.id !== cleanUserId) return
-    if (shownOneTimeNotifications?.[cleanUserId]?.[cleanEventKey]) return
+    if (!cleanUserId || !cleanEventKey) return false
+    const ledgerHit = !!notificationLedgerRef.current?.[cleanUserId]?.[cleanEventKey]
+    const notificationHit = notificationsRef.current.some(notification => notification.eventKey===cleanEventKey && (notification.recipients || []).includes(cleanUserId))
+    if (ledgerHit || notificationHit) {
+      if (!ledgerHit) {
+        const stamp = now()
+        updateNotificationLedger(cleanUserId, [cleanEventKey], { createdAt:stamp, shownAt:stamp })
+      }
+      return false
+    }
     fireNotif(type, title, body, [cleanUserId], cleanEventKey)
-    markOneTimeNotificationsShown(cleanUserId, [cleanEventKey])
-  }, [currentUser?.id, fireNotif, markOneTimeNotificationsShown, shownOneTimeNotifications])
+    const stamp = now()
+    updateNotificationLedger(cleanUserId, [cleanEventKey], { createdAt:stamp, shownAt:stamp })
+    return true
+  }, [fireNotif, updateNotificationLedger])
+  const notifyCurrentUserOneTimeEvent = useCallback(({ userId, eventKey, type, title, body }) => {
+    const cleanUserId = String(userId || "").trim()
+    if (!cleanUserId || currentUser?.id !== cleanUserId) return false
+    return enqueueUserNotification({ userId:cleanUserId, eventKey, type, title, body })
+  }, [currentUser?.id, enqueueUserNotification])
+  const markNotificationsReadForUser = useCallback((userId, notificationIds = []) => {
+    const cleanUserId = String(userId || "").trim()
+    const idSet = new Set((notificationIds || []).map(id => String(id || "").trim()).filter(Boolean))
+    if (!cleanUserId || !idSet.size) return
+    const eventKeys = []
+    setNotifications(prev => prev.map(notification => {
+      if (!idSet.has(String(notification.id || "").trim()) || !(notification.recipients || []).includes(cleanUserId)) return notification
+      const nextReadBy = Array.isArray(notification.readBy) && notification.readBy.includes(cleanUserId)
+        ? notification.readBy
+        : [...(notification.readBy || []), cleanUserId]
+      if (notification.eventKey) eventKeys.push(notification.eventKey)
+      return { ...notification, read:true, readBy:nextReadBy }
+    }))
+    if (eventKeys.length) updateNotificationLedger(cleanUserId, eventKeys, { seenAt:now() })
+  }, [updateNotificationLedger])
+  const dismissNotificationsForUser = useCallback((userId, notificationIds = []) => {
+    const cleanUserId = String(userId || "").trim()
+    const idSet = new Set((notificationIds || []).map(id => String(id || "").trim()).filter(Boolean))
+    if (!cleanUserId || !idSet.size) return
+    const stamp = now()
+    const eventKeys = []
+    setNotifications(prev => prev.map(notification => {
+      if (!idSet.has(String(notification.id || "").trim()) || !(notification.recipients || []).includes(cleanUserId)) return notification
+      const nextReadBy = Array.isArray(notification.readBy) && notification.readBy.includes(cleanUserId)
+        ? notification.readBy
+        : [...(notification.readBy || []), cleanUserId]
+      const nextDismissedBy = Array.isArray(notification.dismissedBy) && notification.dismissedBy.includes(cleanUserId)
+        ? notification.dismissedBy
+        : [...(notification.dismissedBy || []), cleanUserId]
+      if (notification.eventKey) eventKeys.push(notification.eventKey)
+      return { ...notification, read:true, readBy:nextReadBy, dismissedBy:nextDismissedBy }
+    }))
+    setToasts(prev => prev.filter(toast => !(toast.recipients || []).includes(cleanUserId) || !idSet.has(String(toast.id || "").trim())))
+    if (eventKeys.length) updateNotificationLedger(cleanUserId, eventKeys, { seenAt:stamp, dismissedAt:stamp })
+  }, [updateNotificationLedger])
+  const clearNotificationsForUser = useCallback((userId) => {
+    const cleanUserId = String(userId || "").trim()
+    if (!cleanUserId) return
+    const targetIds = notificationsRef.current
+      .filter(notification => (notification.recipients || []).includes(cleanUserId) && !isNotificationDismissedForUser(notification, cleanUserId))
+      .map(notification => notification.id)
+    if (targetIds.length) dismissNotificationsForUser(cleanUserId, targetIds)
+  }, [dismissNotificationsForUser])
   useEffect(() => {
     const cleanUserId = String(currentUser?.id || "").trim()
     if (!cleanUserId || !currentUser?.approved) return
-    const ledger = shownOneTimeNotifications?.[cleanUserId] || {}
     const pendingNotifications = []
     const previewText = (value = "") => {
       const clean = String(value || "").trim()
       return clean.length > 88 ? `${clean.slice(0, 85)}...` : clean
     }
-    const todayIso = getTodayDateInput()
 
     messages
       .filter(message => (message.kind || "team") === "dm" && message.toUserId === cleanUserId)
       .forEach(message => {
         const eventKey = `dm:${message.id}`
-        if (ledger[eventKey]) return
         pendingNotifications.push({
           userId: cleanUserId,
           eventKey,
@@ -2478,22 +2639,22 @@ export default function JLCMSApp() {
     tasks
       .filter(task => task.assignedUserId === cleanUserId && String(task.status || "To Do") !== "Done")
       .forEach(task => {
-        const eventKey = `task:${task.id}`
-        if (ledger[eventKey]) return
+        const assignmentStamp = task.assignmentUpdatedAt || task.updatedAt || task.createdAt || task.id
+        const eventKey = ["task_assignment", cleanUserId, task.id, assignmentStamp].join(":")
         pendingNotifications.push({
           userId: cleanUserId,
           eventKey,
           type: "task",
           title: `Task Assigned - ${task.title || "Untitled Task"}`,
-          body: `Due ${displayDate(task.dueDate)}${task.dueTime ? ` at ${displayTimeValue(task.dueTime)}` : ""}`
+          body: `${task.assignedByName ? `Assigned by ${task.assignedByName}. ` : ""}Due ${displayDate(task.dueDate)}${task.dueTime ? ` at ${displayTimeValue(task.dueTime)}` : ""}${task.priority ? ` | ${task.priority}` : ""}${task.detail ? ` | ${previewText(task.detail)}` : ""}`
         })
       })
 
     oneOffScheduleBlocks
-      .filter(entry => entry.userId === cleanUserId && (!entry.date || entry.date >= todayIso))
+      .filter(entry => entry.userId === cleanUserId && (!entry.date || entry.date >= getTodayDateInput()))
       .forEach(entry => {
-        const eventKey = `schedule:oneoff:${entry.id}`
-        if (ledger[eventKey]) return
+        const assignmentStamp = entry.updatedAt || entry.createdAt || entry.id
+        const eventKey = ["schedule_assignment", "oneoff", cleanUserId, entry.id, assignmentStamp].join(":")
         pendingNotifications.push({
           userId: cleanUserId,
           eventKey,
@@ -2506,8 +2667,8 @@ export default function JLCMSApp() {
     recurringWeeklySchedule
       .filter(entry => entry.userId === cleanUserId)
       .forEach(entry => {
-        const eventKey = `schedule:recurring:${entry.id}`
-        if (ledger[eventKey]) return
+        const assignmentStamp = entry.updatedAt || entry.createdAt || entry.id
+        const eventKey = ["schedule_assignment", "recurring", cleanUserId, entry.id, assignmentStamp].join(":")
         pendingNotifications.push({
           userId: cleanUserId,
           eventKey,
@@ -2519,10 +2680,9 @@ export default function JLCMSApp() {
 
     if (!pendingNotifications.length) return
     pendingNotifications.forEach(item => {
-      fireNotif(item.type, item.title, item.body, [item.userId], item.eventKey)
+      enqueueUserNotification(item)
     })
-    markOneTimeNotificationsShown(cleanUserId, pendingNotifications.map(item => item.eventKey))
-  }, [currentUser?.approved, currentUser?.id, fireNotif, markOneTimeNotificationsShown, messages, oneOffScheduleBlocks, recurringWeeklySchedule, shownOneTimeNotifications, tasks])
+  }, [currentUser?.approved, currentUser?.id, enqueueUserNotification, messages, oneOffScheduleBlocks, recurringWeeklySchedule, tasks])
 
 
   /* ---- Schedule checker ---- */
@@ -2531,8 +2691,7 @@ export default function JLCMSApp() {
     if (!teamMembers.length) return
     const now_ = new Date()
     const h = now_.getHours(), m = now_.getMinutes()
-    const totalMin = h * 60 + m
-    const localDate = new Date(now_.getTime() - now_.getTimezoneOffset() * 60000).toISOString().slice(0,10)
+    const localDate = getLocalDateKey(now_)
     const dayKey = WEEK_DAYS[(now_.getDay() + 6) % 7]
 
     const oneOffToday = oneOffScheduleBlocks
@@ -2557,16 +2716,29 @@ export default function JLCMSApp() {
 
     const scheduleBlocks = [...recurringToday, ...oneOffToday]
     scheduleBlocks.forEach(block => {
-      const user = teamMembers.find(u=>u.id===block.userId)
-      const startTime = timeToday(block.start)
-      const blockMin = startTime.getHours() * 60 + startTime.getMinutes()
-      const diff = blockMin - totalMin
-      const titleBase = `${user?.name || "Team Member"}: ${block.title || "Shift"}`
-      if (diff >= 14 && diff <= 16) {
-        fireNotif("schedule", `Upcoming in 15 min - ${titleBase}`, `${block.start} - ${block.end}`, [block.userId])
+      const startAt = getDateTimeForOccurrence(localDate, block.start)
+      if (!startAt) return
+      const titleBase = block.title || "Shift"
+      const dateLabel = displayDate(localDate)
+      const reminderAt = new Date(startAt.getTime() - 10 * 60000)
+      const lateAt = new Date(startAt.getTime() + 10 * 60000)
+      if (now_ >= reminderAt && now_ < startAt) {
+        enqueueUserNotification({
+          userId: block.userId,
+          eventKey: buildPlannerNotificationKey({ userId:block.userId, itemType:block.source==="oneoff" ? "oneoff_schedule" : "recurring_schedule", itemId:block.id, occurrenceDate:localDate, occurrenceTime:formatTime24Hour(block.start), kind:NOTIFICATION_KIND.reminder10 }),
+          type: "schedule",
+          title: `10 minutes until ${titleBase}`,
+          body: `${dateLabel} | ${formatOccurrenceTimeLabel(block.start)} - ${formatOccurrenceTimeLabel(block.end, "End of block")}`
+        })
       }
-      if (diff >= -1 && diff <= 1) {
-        fireNotif("schedule", `Starting now - ${titleBase}`, `${block.start} - ${block.end}`, [block.userId])
+      if (now_ >= startAt && now_ < lateAt) {
+        enqueueUserNotification({
+          userId: block.userId,
+          eventKey: buildPlannerNotificationKey({ userId:block.userId, itemType:block.source==="oneoff" ? "oneoff_schedule" : "recurring_schedule", itemId:block.id, occurrenceDate:localDate, occurrenceTime:formatTime24Hour(block.start), kind:NOTIFICATION_KIND.startsNow }),
+          type: "schedule",
+          title: `${titleBase} is starting now`,
+          body: `${dateLabel} | ${formatOccurrenceTimeLabel(block.start)} - ${formatOccurrenceTimeLabel(block.end, "End of block")}`
+        })
       }
     })
 
@@ -2574,33 +2746,40 @@ export default function JLCMSApp() {
     const dueToday = pendingTasks.filter(t=>t.dueDate===localDate)
 
     pendingTasks
-      .filter(t=>t.dueDate===localDate && t.dueTime)
+      .filter(t=>t.assignedUserId && t.dueDate===localDate && t.dueTime)
       .forEach(task=>{
-        const [hh, mm] = String(task.dueTime || "").split(":").map(Number)
-        if (!Number.isFinite(hh) || !Number.isFinite(mm)) return
-        const dueMin = hh * 60 + mm
-        const diff = dueMin - totalMin
-        if (diff >= 29 && diff <= 31) {
-          fireNotif("deadline", `Task Due in 30 Minutes - ${task.title}`, `Due at ${displayTimeValue(task.dueTime)}.`, [task.assignedUserId].filter(Boolean))
+        const dueAt = getDateTimeForOccurrence(task.dueDate, task.dueTime, "end")
+        if (!dueAt) return
+        const reminderAt = new Date(dueAt.getTime() - 10 * 60000)
+        const lateAt = new Date(dueAt.getTime() + 10 * 60000)
+        const occurrenceTime = formatTime24Hour(task.dueTime)
+        const body = `Due ${displayDate(task.dueDate)} at ${formatOccurrenceTimeLabel(task.dueTime)}${task.detail ? ` | ${task.detail}` : ""}`
+        if (now_ >= reminderAt && now_ < dueAt) {
+          enqueueUserNotification({
+            userId: task.assignedUserId,
+            eventKey: buildPlannerNotificationKey({ userId:task.assignedUserId, itemType:"task", itemId:task.id, occurrenceDate:task.dueDate, occurrenceTime, kind:NOTIFICATION_KIND.reminder10 }),
+            type: "deadline",
+            title: `10 minutes until ${task.title || "Task"} is due`,
+            body
+          })
         }
-        if (diff >= 14 && diff <= 16) {
-          fireNotif("deadline", `Task Due in 15 Minutes - ${task.title}`, `Due at ${displayTimeValue(task.dueTime)}.`, [task.assignedUserId].filter(Boolean))
+        if (now_ >= dueAt && now_ < lateAt) {
+          enqueueUserNotification({
+            userId: task.assignedUserId,
+            eventKey: buildPlannerNotificationKey({ userId:task.assignedUserId, itemType:"task", itemId:task.id, occurrenceDate:task.dueDate, occurrenceTime, kind:NOTIFICATION_KIND.dueNow }),
+            type: "deadline",
+            title: `${task.title || "Task"} is due now`,
+            body
+          })
         }
-      })
-
-    const toDate = (task) => {
-      if (!task?.dueDate) return null
-      const timePart = task.dueTime ? `${task.dueTime}:00` : "23:59:59"
-      const out = new Date(`${task.dueDate}T${timePart}`)
-      return Number.isNaN(out.getTime()) ? null : out
-    }
-    pendingTasks
-      .filter(t=>String(t.priority||"Normal")==="Urgent")
-      .forEach(task=>{
-        const due = toDate(task)
-        if (!due) return
-        if (due.getTime() < now_.getTime()) {
-          fireNotif("deadline", `Urgent Task Overdue - ${task.title}`, "Urgent assignment is overdue.", [task.assignedUserId].filter(Boolean))
+        if (now_ >= lateAt) {
+          enqueueUserNotification({
+            userId: task.assignedUserId,
+            eventKey: buildPlannerNotificationKey({ userId:task.assignedUserId, itemType:"task", itemId:task.id, occurrenceDate:task.dueDate, occurrenceTime, kind:NOTIFICATION_KIND.late }),
+            type: "deadline",
+            title: `${task.title || "Task"} is overdue`,
+            body
+          })
         }
       })
 
@@ -2609,11 +2788,11 @@ export default function JLCMSApp() {
         const blocksToday = scheduleBlocks.filter(b=>b.userId===member.id).length
         const tasksToday = dueToday.filter(t=>t.assignedUserId===member.id).length
         if (blocksToday || tasksToday) {
-          fireNotif("schedule", "Daily Assignment Summary", `${blocksToday} schedule blocks and ${tasksToday} tasks due today.`, [member.id])
+          fireNotif("schedule", "Daily Assignment Summary", `${blocksToday} schedule blocks and ${tasksToday} tasks due today.`, [member.id], `daily-summary:${member.id}:${localDate}`)
         }
       })
     }
-  },[tick, fireNotif, users, oneOffScheduleBlocks, recurringWeeklySchedule, tasks, currentUser?.teamId])
+  },[tick, fireNotif, users, oneOffScheduleBlocks, recurringWeeklySchedule, tasks, currentUser?.teamId, enqueueUserNotification])
 
 
   /* ---- Permit & deadline checker ---- */
@@ -3276,8 +3455,10 @@ export default function JLCMSApp() {
     else alert("Push notifications blocked. Please enable them in your browser settings, then refresh.")
   }
 
-
-  const unreadCount = notifications.filter(n=>!n.read && n.recipients.includes(activeUser)).length
+  const activeNotifications = notifications
+    .filter(notification => (notification.recipients || []).includes(activeUser) && !isNotificationDismissedForUser(notification, activeUser))
+    .map(normalizeNotificationRecord)
+  const unreadCount = activeNotifications.filter(notification => !isNotificationReadForUser(notification, activeUser)).length
   const selProp = props.find(p=>p.id===selected)
   const clientMap = Object.fromEntries(clients.map(c=>[c.id, c]))
   const currentTeam = currentUser ? teams.find(t=>t.teamId===currentUser.teamId) : null
@@ -3443,7 +3624,8 @@ export default function JLCMSApp() {
       setTasks(Array.isArray(incoming.tasks) ? incoming.tasks : [])
       setOneOffScheduleBlocks(Array.isArray(incoming.oneOffScheduleBlocks) ? incoming.oneOffScheduleBlocks : [])
       setRecurringWeeklySchedule(Array.isArray(incoming.recurringWeeklySchedule) ? incoming.recurringWeeklySchedule : [])
-      setNotifications(Array.isArray(incoming.notifications) ? incoming.notifications : [])
+      setNotifications(Array.isArray(incoming.notifications) ? incoming.notifications.map(normalizeNotificationRecord) : [])
+      setNotificationLedger(normalizeNotificationLedger(incoming.notificationLedger || incoming.shownOneTimeNotifications || {}))
       setUsers(normalizedUsers)
       setTeams(normalizedTeams)
       setNeedsInitialSetup(normalizedUsers.length===0)
@@ -3540,6 +3722,14 @@ export default function JLCMSApp() {
   useEffect(() => {
     if (currentUser?.id) setActiveUser(currentUser.id)
   }, [currentUser?.id])
+
+  useEffect(() => {
+    notificationsRef.current = notifications
+  }, [notifications])
+
+  useEffect(() => {
+    notificationLedgerRef.current = notificationLedger
+  }, [notificationLedger])
 
   useEffect(() => {
     if (!users.length) return
@@ -3696,7 +3886,7 @@ export default function JLCMSApp() {
             setShowLegend(false)
             setShowQuickRef(false)
             setNotifPanel(v=>!v)
-            setNotifications(prev=>prev.map(n=>n.recipients.includes(activeUser)?{...n,read:true}:n))
+            markNotificationsReadForUser(activeUser, activeNotifications.map(notification => notification.id))
           }}
           style={{
             background:"#1A2332",
@@ -3780,7 +3970,11 @@ export default function JLCMSApp() {
 
       {/* ---- TOAST STACK ---- */}
       <div style={{position:"fixed",bottom:24,right:24,zIndex:1000,display:"flex",flexDirection:"column",gap:10,maxWidth:340}}>
-        {toasts.filter(t=>(t.recipients||[]).includes(activeUser)).map(t=>{
+        {toasts.filter(t=>{
+          if (!(t.recipients||[]).includes(activeUser)) return false
+          if (!t.eventKey) return true
+          return !notificationLedgerRef.current?.[activeUser]?.[t.eventKey]?.dismissedAt
+        }).map(t=>{
           const nt = NOTIF_TYPES[t.type] || NOTIF_TYPES.schedule
           return(
             <div key={t.id} className="notif-in" style={{background:"#111827",border:`1px solid ${nt.color}`,borderLeft:`4px solid ${nt.color}`,borderRadius:8,padding:"10px 14px",boxShadow:"0 8px 24px rgba(0,0,0,0.5)"}}>
@@ -3789,6 +3983,9 @@ export default function JLCMSApp() {
                 <span style={{fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700,fontSize:13,color:nt.color,letterSpacing:1}}>{cleanUiText(t.title)}</span>
               </div>
               <div style={{fontSize:12,color:"#9CA3AF",lineHeight:1.4}}>{cleanUiText(t.body)}</div>
+              <div style={{display:"flex",justifyContent:"flex-end",marginTop:8}}>
+                <button onClick={()=>setToasts(prev=>prev.filter(toast=>toast.id!==t.id))} style={{...btnGray,fontSize:10,padding:"3px 8px"}}>Dismiss</button>
+              </div>
             </div>
           )
         })}
@@ -3862,7 +4059,7 @@ export default function JLCMSApp() {
                   </button>
                 )}
                 <button
-                  onClick={()=>setNotifications([])}
+                  onClick={()=>clearNotificationsForUser(activeUser)}
                   style={{...btnGray,fontSize:11,padding:"4px 10px"}}
                 >
                   Clear All
@@ -3875,20 +4072,21 @@ export default function JLCMSApp() {
             </div>
 
             <div style={{flex:1,overflowY:"auto",overscrollBehavior:"contain",padding:12,display:"flex",flexDirection:"column",gap:8}}>
-              {notifications.filter(n=>n.recipients.includes(activeUser)).length===0&&(
+              {activeNotifications.length===0&&(
                 <div style={{textAlign:"center",padding:32,color:"#4B5563",fontFamily:"'Barlow Condensed',sans-serif",fontSize:16,letterSpacing:2,background:"#0C1117",border:"1px solid #1F2937",borderRadius:8}}>
                   NO NOTIFICATIONS
                 </div>
               )}
-              {notifications.filter(n=>n.recipients.includes(activeUser)).map(n=>{
+              {activeNotifications.map(n=>{
                 const nt = NOTIF_TYPES[n.type] || NOTIF_TYPES.schedule
+                const isRead = isNotificationReadForUser(n, activeUser)
                 return(
                   <div
                     key={n.id}
                     style={{
-                      background:n.read ? "#151E2B" : "#0F1923",
-                      border:`1px solid ${n.read ? "#253449" : nt.color}44`,
-                      borderLeft:`3px solid ${n.read ? "#374151" : nt.color}`,
+                      background:isRead ? "#151E2B" : "#0F1923",
+                      border:`1px solid ${isRead ? "#253449" : nt.color}44`,
+                      borderLeft:`3px solid ${isRead ? "#374151" : nt.color}`,
                       borderRadius:8,
                       padding:"10px 12px",
                       boxSizing:"border-box"
@@ -3907,6 +4105,10 @@ export default function JLCMSApp() {
                         const tm = users.find(t=>t.id===r)
                         return tm ? <span key={r} style={{fontSize:10,color:"#93C5FD",background:"#1D4ED833",padding:"1px 6px",borderRadius:10,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700}}>{tm.name}</span> : null
                       })}
+                    </div>
+                    <div style={{display:"flex",justifyContent:"flex-end",gap:8,marginTop:10}}>
+                      {!isRead ? <button onClick={()=>markNotificationsReadForUser(activeUser, [n.id])} style={{...btnGray,fontSize:10,padding:"4px 10px"}}>Mark Read</button> : null}
+                      <button onClick={()=>dismissNotificationsForUser(activeUser, [n.id])} style={{...btnGray,fontSize:10,padding:"4px 10px"}}>Dismiss</button>
                     </div>
                   </div>
                 )
@@ -6516,12 +6718,12 @@ function ScheduleTab({ activeUser, currentUser, teamUsers = [], recurringWeeklyS
   const saveRecurring = () => {
     if (!canManageRecurring) { denyAccess(); return }
     if (!recurringForm.userId || !recurringForm.day || !recurringForm.start || !recurringForm.end) return
-    const payload = { id: recurringEditId || uid(), userId: recurringForm.userId, day: recurringForm.day, start: recurringForm.start, end: recurringForm.end, note: recurringForm.note.trim(), createdBy: currentUser?.id || "", createdAt: recurringEditId ? (recurringWeeklySchedule.find(x=>x.id===recurringEditId)?.createdAt || now()) : now() }
+    const payload = { id: recurringEditId || uid(), userId: recurringForm.userId, day: recurringForm.day, start: recurringForm.start, end: recurringForm.end, note: recurringForm.note.trim(), createdBy: currentUser?.id || "", createdAt: recurringEditId ? (recurringWeeklySchedule.find(x=>x.id===recurringEditId)?.createdAt || now()) : now(), updatedAt: now() }
     setRecurringWeeklySchedule(prev=> recurringEditId ? prev.map(x=>x.id===recurringEditId ? payload : x) : [...prev, payload])
     if (onImmediateOneTimeAlert) {
       onImmediateOneTimeAlert({
         userId: payload.userId,
-        eventKey: `schedule:recurring:${payload.id}`,
+        eventKey: ["schedule_assignment", "recurring", payload.userId, payload.id, payload.updatedAt].join(":"),
         type: "schedule",
         title: `Recurring Schedule Added - ${payload.day}`,
         body: `${payload.start} - ${payload.end}${payload.note ? ` | ${payload.note}` : ""}`
@@ -6560,12 +6762,12 @@ function ScheduleTab({ activeUser, currentUser, teamUsers = [], recurringWeeklyS
   const saveOneOff = () => {
     if (!canManageSchedule) { denyAccess(); return }
     if (!oneOffForm.userId || !oneOffForm.date || !oneOffForm.start || !oneOffForm.end || !oneOffForm.title.trim()) return
-    const payload = { id: oneOffEditId || uid(), userId: oneOffForm.userId, date: oneOffForm.date, start: oneOffForm.start, end: oneOffForm.end, title: oneOffForm.title.trim(), detail: oneOffForm.detail.trim(), type: oneOffForm.type || "supplement", createdBy: currentUser?.id || "", createdAt: oneOffEditId ? (oneOffScheduleBlocks.find(x=>x.id===oneOffEditId)?.createdAt || now()) : now() }
+    const payload = { id: oneOffEditId || uid(), userId: oneOffForm.userId, date: oneOffForm.date, start: oneOffForm.start, end: oneOffForm.end, title: oneOffForm.title.trim(), detail: oneOffForm.detail.trim(), type: oneOffForm.type || "supplement", createdBy: currentUser?.id || "", createdAt: oneOffEditId ? (oneOffScheduleBlocks.find(x=>x.id===oneOffEditId)?.createdAt || now()) : now(), updatedAt: now() }
     setOneOffScheduleBlocks(prev=> oneOffEditId ? prev.map(x=>x.id===oneOffEditId ? payload : x) : [...prev, payload])
     if (onImmediateOneTimeAlert) {
       onImmediateOneTimeAlert({
         userId: payload.userId,
-        eventKey: `schedule:oneoff:${payload.id}`,
+        eventKey: ["schedule_assignment", "oneoff", payload.userId, payload.id, payload.updatedAt].join(":"),
         type: "schedule",
         title: `Schedule Added - ${payload.title}`,
         body: `${displayDate(payload.date)} | ${payload.start} - ${payload.end}`
@@ -6606,21 +6808,32 @@ function ScheduleTab({ activeUser, currentUser, teamUsers = [], recurringWeeklyS
     if (!canManageTasks) { denyAccess(); return }
     if (!taskForm.title.trim() || !taskForm.assignedUserId || !taskForm.dueDate) return
     const editingTask = taskEditId ? tasks.find(x=>x.id===taskEditId) : null
-    const payload = { id: taskEditId || uid(), title: taskForm.title.trim(), detail: taskForm.detail.trim(), assignedUserId: taskForm.assignedUserId, propertyId: taskForm.propertyId || "", clientId: taskForm.clientId || "", dueDate: taskForm.dueDate, dueTime: taskForm.dueTime || "", priority: taskForm.priority || "Normal", status: taskForm.status || "To Do", createdAt: taskEditId ? (tasks.find(x=>x.id===taskEditId)?.createdAt || now()) : now() }
+    const assignmentChanged = !editingTask || editingTask.assignedUserId!==taskForm.assignedUserId
+    const payload = {
+      id: taskEditId || uid(),
+      title: taskForm.title.trim(),
+      detail: taskForm.detail.trim(),
+      assignedUserId: taskForm.assignedUserId,
+      propertyId: taskForm.propertyId || "",
+      clientId: taskForm.clientId || "",
+      dueDate: taskForm.dueDate,
+      dueTime: taskForm.dueTime || "",
+      priority: taskForm.priority || "Normal",
+      status: taskForm.status || "To Do",
+      createdAt: taskEditId ? (tasks.find(x=>x.id===taskEditId)?.createdAt || now()) : now(),
+      updatedAt: now(),
+      assignmentUpdatedAt: assignmentChanged ? now() : (editingTask?.assignmentUpdatedAt || editingTask?.createdAt || now()),
+      assignedById: currentUser?.id || "",
+      assignedByName: currentUser?.name || ""
+    }
     setTasks(prev=> taskEditId ? prev.map(x=>x.id===taskEditId ? payload : x) : [payload, ...prev])
-    if (!taskEditId && fireNotif) {
-      fireNotif("task", `New Task Assigned - ${payload.title}`, `Due ${payload.dueDate}${payload.dueTime ? ` at ${displayTimeValue(payload.dueTime)}` : ""}.`, [payload.assignedUserId], `task:${payload.id}`)
-    }
-    if (taskEditId && fireNotif && editingTask && editingTask.assignedUserId!==payload.assignedUserId) {
-      fireNotif("task", `Task Reassigned - ${payload.title}`, `Due ${payload.dueDate}${payload.dueTime ? ` at ${displayTimeValue(payload.dueTime)}` : ""}.`, [payload.assignedUserId], `task:${payload.id}`)
-    }
     if (onImmediateOneTimeAlert) {
       onImmediateOneTimeAlert({
         userId: payload.assignedUserId,
-        eventKey: `task:${payload.id}`,
+        eventKey: ["task_assignment", payload.assignedUserId, payload.id, payload.assignmentUpdatedAt].join(":"),
         type: "task",
-        title: `${taskEditId ? "Task Updated" : "Task Assigned"} - ${payload.title}`,
-        body: `Due ${displayDate(payload.dueDate)}${payload.dueTime ? ` at ${displayTimeValue(payload.dueTime)}` : ""}`
+        title: `${taskEditId && assignmentChanged ? "Task Reassigned" : "Task Assigned"} - ${payload.title}`,
+        body: `${payload.assignedByName ? `Assigned by ${payload.assignedByName}. ` : ""}Due ${displayDate(payload.dueDate)}${payload.dueTime ? ` at ${displayTimeValue(payload.dueTime)}` : ""}${payload.priority ? ` | ${payload.priority}` : ""}${payload.detail ? ` | ${payload.detail}` : ""}`
       })
     }
     setTaskEditId("")
@@ -6682,29 +6895,62 @@ function ScheduleTab({ activeUser, currentUser, teamUsers = [], recurringWeeklyS
       if (!canManageRecurring) { denyAccess(); return }
       const days = Array.isArray(assignmentForm.days) && assignmentForm.days.length ? assignmentForm.days : [todayDay]
       if (!assignmentForm.start || !assignmentForm.end) return
+      const assignmentStamp = now()
       const targetDays = recurringEditId ? [assignmentForm.days[0] || todayDay] : days
       const nextRows = recurringEditId
-        ? recurringWeeklySchedule.map(row=>row.id!==recurringEditId ? row : { ...row, userId:assignmentForm.userId, day:targetDays[0], start:assignmentForm.start, end:assignmentForm.end, note:(assignmentForm.title || assignmentForm.notes).trim(), repeatRule:assignmentForm.repeatRule || "Weekly", endDate:assignmentForm.endDate || "" })
+        ? recurringWeeklySchedule.map(row=>row.id!==recurringEditId ? row : { ...row, userId:assignmentForm.userId, day:targetDays[0], start:assignmentForm.start, end:assignmentForm.end, note:(assignmentForm.title || assignmentForm.notes).trim(), repeatRule:assignmentForm.repeatRule || "Weekly", endDate:assignmentForm.endDate || "", updatedAt:assignmentStamp })
         : [
             ...recurringWeeklySchedule,
-            ...targetDays.map(day=>({ id:uid(), userId:assignmentForm.userId, day, start:assignmentForm.start, end:assignmentForm.end, note:(assignmentForm.title || assignmentForm.notes).trim(), repeatRule:assignmentForm.repeatRule || "Weekly", endDate:assignmentForm.endDate || "", createdBy:currentUser?.id || "", createdAt:now() }))
+            ...targetDays.map(day=>({ id:uid(), userId:assignmentForm.userId, day, start:assignmentForm.start, end:assignmentForm.end, note:(assignmentForm.title || assignmentForm.notes).trim(), repeatRule:assignmentForm.repeatRule || "Weekly", endDate:assignmentForm.endDate || "", createdBy:currentUser?.id || "", createdAt:assignmentStamp, updatedAt:assignmentStamp }))
           ]
       setRecurringWeeklySchedule(nextRows)
+      if (onImmediateOneTimeAlert) {
+        const notifyRows = recurringEditId ? nextRows.filter(row=>row.id===recurringEditId) : nextRows.filter(row=>row.updatedAt===assignmentStamp && row.userId===assignmentForm.userId)
+        notifyRows.forEach(row => {
+          onImmediateOneTimeAlert({
+            userId: row.userId,
+            eventKey: ["schedule_assignment", "recurring", row.userId, row.id, row.updatedAt || assignmentStamp].join(":"),
+            type: "schedule",
+            title: `Recurring Schedule Added - ${row.day}`,
+            body: `${row.start} - ${row.end}${row.note ? ` | ${row.note}` : ""}`
+          })
+        })
+      }
       setAssignmentOpen(false)
       resetAssignmentEditor("recurring")
       return
     }
     if (assignmentForm.type==="oneoff") {
       if (!assignmentForm.date || !assignmentForm.start || !assignmentForm.end || !assignmentForm.title.trim()) return
-      const payload = { id: oneOffEditId || uid(), userId: assignmentForm.userId, date: assignmentForm.date, start: assignmentForm.start, end: assignmentForm.end, title: assignmentForm.title.trim(), detail: assignmentForm.notes.trim(), type: assignmentForm.oneOffMode || "supplement", createdBy: currentUser?.id || "", createdAt: oneOffEditId ? (oneOffScheduleBlocks.find(x=>x.id===oneOffEditId)?.createdAt || now()) : now() }
+      const payload = { id: oneOffEditId || uid(), userId: assignmentForm.userId, date: assignmentForm.date, start: assignmentForm.start, end: assignmentForm.end, title: assignmentForm.title.trim(), detail: assignmentForm.notes.trim(), type: assignmentForm.oneOffMode || "supplement", createdBy: currentUser?.id || "", createdAt: oneOffEditId ? (oneOffScheduleBlocks.find(x=>x.id===oneOffEditId)?.createdAt || now()) : now(), updatedAt: now() }
       setOneOffScheduleBlocks(prev=> oneOffEditId ? prev.map(x=>x.id===oneOffEditId ? payload : x) : [...prev, payload])
+      if (onImmediateOneTimeAlert) {
+        onImmediateOneTimeAlert({
+          userId: payload.userId,
+          eventKey: ["schedule_assignment", "oneoff", payload.userId, payload.id, payload.updatedAt].join(":"),
+          type: "schedule",
+          title: `Schedule Added - ${payload.title}`,
+          body: `${displayDate(payload.date)} | ${payload.start} - ${payload.end}`
+        })
+      }
       setAssignmentOpen(false)
       resetAssignmentEditor("oneoff")
       return
     }
     if (!assignmentForm.title.trim() || !assignmentForm.dueDate) return
-    const payload = { id: taskEditId || uid(), title: assignmentForm.title.trim(), detail: assignmentForm.notes.trim(), assignedUserId: assignmentForm.userId, propertyId:"", clientId:"", dueDate: assignmentForm.dueDate, dueTime: assignmentForm.dueTime || "", priority: assignmentForm.priority || "Normal", status: assignmentForm.status || "To Do", createdAt: taskEditId ? (tasks.find(x=>x.id===taskEditId)?.createdAt || now()) : now() }
+    const editingTask = taskEditId ? tasks.find(x=>x.id===taskEditId) : null
+    const assignmentChanged = !editingTask || editingTask.assignedUserId!==assignmentForm.userId
+    const payload = { id: taskEditId || uid(), title: assignmentForm.title.trim(), detail: assignmentForm.notes.trim(), assignedUserId: assignmentForm.userId, propertyId:"", clientId:"", dueDate: assignmentForm.dueDate, dueTime: assignmentForm.dueTime || "", priority: assignmentForm.priority || "Normal", status: assignmentForm.status || "To Do", createdAt: taskEditId ? (tasks.find(x=>x.id===taskEditId)?.createdAt || now()) : now(), updatedAt: now(), assignmentUpdatedAt: assignmentChanged ? now() : (editingTask?.assignmentUpdatedAt || editingTask?.createdAt || now()), assignedById: currentUser?.id || "", assignedByName: currentUser?.name || "" }
     setTasks(prev=> taskEditId ? prev.map(x=>x.id===taskEditId ? payload : x) : [payload, ...prev])
+    if (onImmediateOneTimeAlert) {
+      onImmediateOneTimeAlert({
+        userId: payload.assignedUserId,
+        eventKey: ["task_assignment", payload.assignedUserId, payload.id, payload.assignmentUpdatedAt].join(":"),
+        type: "task",
+        title: `${taskEditId && assignmentChanged ? "Task Reassigned" : "Task Assigned"} - ${payload.title}`,
+        body: `${payload.assignedByName ? `Assigned by ${payload.assignedByName}. ` : ""}Due ${displayDate(payload.dueDate)}${payload.dueTime ? ` at ${displayTimeValue(payload.dueTime)}` : ""}${payload.priority ? ` | ${payload.priority}` : ""}${payload.detail ? ` | ${payload.detail}` : ""}`
+      })
+    }
     setAssignmentOpen(false)
     resetAssignmentEditor("task")
   }
@@ -6834,6 +7080,19 @@ function ScheduleTab({ activeUser, currentUser, teamUsers = [], recurringWeeklyS
     boxShadow:"none",
     minHeight:36
   })
+  const plannerNavButtonStyle = (active = false) => ({
+    ...buttonStyle,
+    minHeight:46,
+    borderRadius:16,
+    padding:"10px 16px",
+    background:active ? "linear-gradient(180deg,#1B344D,#12263A)" : "linear-gradient(180deg,#132233,#101C2A)",
+    border:active ? "1px solid rgba(105,212,255,0.44)" : `1px solid ${plannerTheme.borderStrong}`,
+    color:active ? "#E8F8FF" : plannerTheme.muted,
+    boxShadow:active ? "0 10px 22px rgba(2,132,199,0.18)" : "0 6px 18px rgba(2,6,23,0.18)",
+    fontSize:13,
+    letterSpacing:0.2,
+    flex:"0 0 auto"
+  })
   const plannerActionRowStyle = {
     display:"flex",
     gap:8,
@@ -6950,14 +7209,14 @@ function ScheduleTab({ activeUser, currentUser, teamUsers = [], recurringWeeklyS
 
         <div style={{display:"flex",gap:10,flexWrap:"wrap",marginBottom:10}}>
           {[{ key:"mine", label:"Mine" }, { key:"team", label:"Team" }].map(item=>(
-            <button key={item.key} onClick={()=>setView(item.key)} style={{...buttonStyle,minHeight:46,borderRadius:16,padding:"10px 18px",background:view===item.key ? "linear-gradient(180deg,#18314A,#122537)" : plannerTheme.panel,border:view===item.key ? "1px solid rgba(105,212,255,0.42)" : `1px solid ${plannerTheme.border}`,color:view===item.key ? "#E8F8FF" : plannerTheme.muted,boxShadow:view===item.key ? "0 10px 22px rgba(2,132,199,0.16)" : "none",fontSize:14}}>{item.label}</button>
+            <button key={item.key} onClick={()=>setView(item.key)} style={plannerNavButtonStyle(view===item.key)}>{item.label}</button>
           ))}
         </div>
 
         <div style={{display:"flex",gap:8,flexWrap:"wrap",alignItems:"center",marginBottom:assignmentOpen ? 12 : 0}}>
           <span style={{fontSize:11,fontWeight:700,letterSpacing:1.2,textTransform:"uppercase",color:"#6D839B"}}>Manage</span>
           {[{ key:"week", label:"Week" }, { key:"recurring", label:"Recurring" }, { key:"tasks", label:"Tasks" }].map(item=>(
-            <button key={item.key} onClick={()=>setView(item.key)} style={{...plannerActionButtonStyle(),minHeight:38,padding:"7px 12px",background:view===item.key ? "#16283A" : "#122132",color:view===item.key ? "#E8F8FF" : plannerTheme.muted,border:view===item.key ? "1px solid rgba(105,212,255,0.36)" : `1px solid ${plannerTheme.border}`}}>{item.label}</button>
+            <button key={item.key} onClick={()=>setView(item.key)} style={plannerNavButtonStyle(view===item.key)}>{item.label}</button>
           ))}
         </div>
 
