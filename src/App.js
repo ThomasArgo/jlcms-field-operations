@@ -6629,6 +6629,8 @@ function ScheduleTab({ activeUser, currentUser, teamUsers = [], recurringWeeklyS
   const plannerTheme = {
     panel:"#0C1827",
     panelAlt:"#101D2D",
+    surface:"#122132",
+    surfaceAlt:"#0F1C2B",
     item:"#16283A",
     border:"rgba(148,163,184,0.18)",
     borderStrong:"rgba(148,163,184,0.28)",
@@ -6650,7 +6652,7 @@ function ScheduleTab({ activeUser, currentUser, teamUsers = [], recurringWeeklyS
     boxShadow:plannerTheme.shadow
   }
   const plannerDayCardStyle = {
-    background:"linear-gradient(180deg, rgba(18,33,50,0.98) 0%, rgba(12,24,39,0.98) 100%)",
+    background:`linear-gradient(180deg, ${plannerTheme.surface} 0%, ${plannerTheme.surfaceAlt} 100%)`,
     border:`1px solid ${plannerTheme.border}`,
     borderRadius:isMobile ? 20 : 22,
     padding:isMobile ? 14 : 16
@@ -6663,16 +6665,22 @@ function ScheduleTab({ activeUser, currentUser, teamUsers = [], recurringWeeklyS
   }
   const plannerItemRowStyle = {
     display:"flex",
-    alignItems:"flex-start",
-    justifyContent:"space-between",
-    gap:10,
+    flexDirection:"column",
+    gap:12,
     padding:isMobile ? "11px 12px" : "12px 13px",
     background:plannerTheme.item,
     border:`1px solid ${plannerTheme.border}`,
     borderRadius:16
   }
+  const plannerItemHeaderStyle = {
+    display:"flex",
+    alignItems:"center",
+    justifyContent:"space-between",
+    gap:10,
+    flexWrap:"wrap"
+  }
   const plannerTimeBadgeStyle = {
-    minWidth:isMobile ? 98 : 110,
+    minWidth:isMobile ? 92 : 104,
     display:"inline-flex",
     alignItems:"center",
     justifyContent:"center",
@@ -6708,6 +6716,12 @@ function ScheduleTab({ activeUser, currentUser, teamUsers = [], recurringWeeklyS
     boxShadow:"none",
     minHeight:36
   })
+  const plannerActionRowStyle = {
+    display:"flex",
+    gap:8,
+    flexWrap:"wrap",
+    justifyContent:isMobile ? "stretch" : "flex-end"
+  }
   const plannerEmptyStyle = {
     padding:"14px 12px",
     borderRadius:16,
@@ -6723,24 +6737,54 @@ function ScheduleTab({ activeUser, currentUser, teamUsers = [], recurringWeeklyS
 
   const renderItemActions = (onEdit, onDelete) => {
     if (!onEdit && !onDelete) return null
-    return <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>{onEdit ? <button onClick={onEdit} style={plannerActionButtonStyle("primary")}>Edit</button> : null}{onDelete ? <button onClick={onDelete} style={plannerActionButtonStyle("danger")}>Delete</button> : null}</div>
+    return <div style={plannerActionRowStyle}>{onEdit ? <button onClick={onEdit} style={{...plannerActionButtonStyle("primary"),flex:isMobile ? "1 1 0" : "0 0 auto"}}>Edit</button> : null}{onDelete ? <button onClick={onDelete} style={{...plannerActionButtonStyle("danger"),flex:isMobile ? "1 1 0" : "0 0 auto"}}>Delete</button> : null}</div>
   }
 
   const renderScheduleItem = (item, options={}) => (
     <div key={options.key || item.id} style={plannerItemRowStyle}>
-      <div style={{display:"flex",gap:12,alignItems:"flex-start",flex:1,minWidth:0}}>
+      <div style={plannerItemHeaderStyle}>
         <div style={plannerTimeBadgeStyle}>{item.start} - {item.end}</div>
-        <div style={{minWidth:0,flex:1}}>
-          <div style={{fontSize:13,fontWeight:700,color:"#F7FAFC",lineHeight:1.35,wordBreak:"break-word"}}>{options.title}</div>
-          {options.subtitle ? <div style={{fontSize:12,color:plannerTheme.muted,marginTop:4,lineHeight:1.45,wordBreak:"break-word"}}>{options.subtitle}</div> : null}
-        </div>
+        <span style={{...plannerPillStyle,color:options.accentColor,border:`1px solid ${options.accentColor}55`,background:`${options.accentColor}12`,flexShrink:0}}>{options.badgeLabel}</span>
       </div>
-      <div style={{display:"flex",flexDirection:"column",alignItems:isMobile?"stretch":"flex-end",gap:8,flexShrink:0}}>
-        <span style={{...plannerPillStyle,color:options.accentColor,border:`1px solid ${options.accentColor}55`,background:`${options.accentColor}12`}}>{options.badgeLabel}</span>
-        {renderItemActions(options.onEdit, options.onDelete)}
+      <div style={{minWidth:0}}>
+        <div style={{fontSize:13,fontWeight:700,color:"#F7FAFC",lineHeight:1.45,wordBreak:"break-word",overflowWrap:"anywhere"}}>{options.title}</div>
+        {options.subtitle ? <div style={{fontSize:12,color:plannerTheme.muted,marginTop:5,lineHeight:1.5,wordBreak:"break-word",overflowWrap:"anywhere"}}>{options.subtitle}</div> : null}
       </div>
+      {renderItemActions(options.onEdit, options.onDelete)}
     </div>
   )
+
+  const renderTaskCard = (task) => {
+    const assigned = userMap[task.assignedUserId]
+    const linkedProp = properties.find(p=>p.id===task.propertyId)
+    const linkedClient = clients.find(c=>c.id===task.clientId)
+    const statusColor = task.status==="Done" ? plannerTheme.success : task.status==="In Progress" ? plannerTheme.warning : plannerTheme.accent
+    const priorityColor = task.priority==="Urgent" ? plannerTheme.danger : task.priority==="High" ? "#FB923C" : task.priority==="Low" ? "#94A3B8" : plannerTheme.accent
+    return (
+      <div key={task.id} style={plannerPersonCardStyle}>
+        <div style={{display:"flex",flexDirection:"column",gap:12}}>
+          <div style={{minWidth:0}}>
+            <div style={{fontSize:16,fontWeight:800,color:"#F8FBFF",lineHeight:1.3,wordBreak:"break-word",overflowWrap:"anywhere"}}>{task.title}</div>
+            <div style={{fontSize:12,color:plannerTheme.muted,marginTop:5,lineHeight:1.5}}>
+              {(assigned?.name || "Unassigned") + " · Due " + formatDateLong(task.dueDate)}{task.dueTime ? ` ${displayTimeValue(task.dueTime)}` : ""}
+            </div>
+          </div>
+          {task.detail ? <div style={{fontSize:12,color:plannerTheme.text,lineHeight:1.6,wordBreak:"break-word",overflowWrap:"anywhere"}}>{task.detail}</div> : null}
+          <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+            <span style={{...plannerPillStyle,color:priorityColor,border:`1px solid ${priorityColor}66`,background:`${priorityColor}12`}}>{task.priority}</span>
+            <span style={{...plannerPillStyle,color:statusColor,border:`1px solid ${statusColor}66`,background:`${statusColor}12`}}>{task.status}</span>
+            {linkedProp && <span style={plannerPillStyle}>{`Job · ${linkedProp.address}`}</span>}
+            {linkedClient && <span style={plannerPillStyle}>{`Client · ${linkedClient.name}`}</span>}
+          </div>
+          <div style={{display:"flex",gap:8,flexWrap:"wrap",alignItems:"stretch"}}>
+            <select value={task.status} onChange={e=>updateTaskStatus(task.id, e.target.value)} style={{...iStyle,padding:"8px 10px",fontSize:12,width:isMobile?"100%":132,flex:isMobile ? "1 1 100%" : "0 0 auto"}} disabled={!canUpdateTaskStatus(task)}>{["To Do","In Progress","Done"].map(s=><option key={s}>{s}</option>)}</select>
+            {(canManageTasks || canEdit) && <button onClick={()=>editTask(task)} style={{...plannerActionButtonStyle("primary"),flex:isMobile ? "1 1 0" : "0 0 auto"}}>Edit</button>}
+            {canDelete && <button onClick={()=>removeTask(task.id)} style={{...plannerActionButtonStyle("danger"),flex:isMobile ? "1 1 0" : "0 0 auto"}}>Delete</button>}
+          </div>
+        </div>
+      </div>
+    )
+  }
 
   const renderPersonGroup = (group, itemRenderer, key) => (
     <div key={key || group.userId} style={plannerPersonCardStyle}>
@@ -6844,7 +6888,7 @@ function ScheduleTab({ activeUser, currentUser, teamUsers = [], recurringWeeklyS
               <select value={oneOffFilterUser} onChange={e=>setOneOffFilterUser(e.target.value)} style={iStyle}><option value="All">All Users</option>{teamUsers.map(u=><option key={u.id} value={u.id}>{u.name}</option>)}</select>
             </div>
             <div style={{height:12}} />
-            {oneOffFiltered.length===0 ? <div style={plannerEmptyStyle}>No matching one-off blocks.</div> : <div style={{display:"flex",flexDirection:"column",gap:10}}>{oneOffFiltered.map(entry=>renderScheduleItem(entry,{ key:`oneoff-${entry.id}`, title:`${entry.userName} Â· ${entry.title}`, subtitle:`${formatDateLong(entry.date)}${entry.detail ? ` Â· ${entry.detail}` : ""}`, accentColor:entry.type==="override" ? plannerTheme.warning : plannerTheme.success, badgeLabel:entry.type==="override" ? "Override" : "Supplement", onEdit:canManageSchedule && canEdit ? ()=>editOneOff(entry) : null, onDelete:canManageSchedule && canDelete ? ()=>removeOneOff(entry.id) : null }))}</div>}
+            {oneOffFiltered.length===0 ? <div style={plannerEmptyStyle}>No matching one-off blocks.</div> : <div style={{display:"flex",flexDirection:"column",gap:10}}>{oneOffFiltered.map(entry=>renderScheduleItem(entry,{ key:`oneoff-${entry.id}`, title:`${entry.userName} · ${entry.title}`, subtitle:`${formatDateLong(entry.date)}${entry.detail ? ` · ${entry.detail}` : ""}`, accentColor:entry.type==="override" ? plannerTheme.warning : plannerTheme.success, badgeLabel:entry.type==="override" ? "Override" : "Supplement", onEdit:canManageSchedule && canEdit ? ()=>editOneOff(entry) : null, onDelete:canManageSchedule && canDelete ? ()=>removeOneOff(entry.id) : null }))}</div>}
           </div>
         </>
       )}
@@ -6913,7 +6957,7 @@ function ScheduleTab({ activeUser, currentUser, teamUsers = [], recurringWeeklyS
               <button onClick={()=>{setTaskUserFilter("All");setTaskStatusFilter("All");setTaskPriorityFilter("All");setTaskDateFilter("")}} style={plannerActionButtonStyle()}>Reset</button>
             </div>
             <div style={{height:12}} />
-            {filteredTasks.length===0 ? <div style={plannerEmptyStyle}>No tasks match these filters.</div> : <div style={{display:"flex",flexDirection:"column",gap:10}}>{filteredTasks.map(task=>{ const assigned = userMap[task.assignedUserId]; const linkedProp = properties.find(p=>p.id===task.propertyId); const linkedClient = clients.find(c=>c.id===task.clientId); const statusColor = task.status==="Done" ? plannerTheme.success : task.status==="In Progress" ? plannerTheme.warning : plannerTheme.accent; const priorityColor = task.priority==="Urgent" ? plannerTheme.danger : task.priority==="High" ? "#FB923C" : task.priority==="Low" ? "#94A3B8" : plannerTheme.accent; return <div key={task.id} style={plannerPersonCardStyle}><div style={{display:"flex",justifyContent:"space-between",gap:10,alignItems:"flex-start",flexWrap:"wrap"}}><div style={{minWidth:0,flex:1}}><div style={{fontSize:16,fontWeight:800,color:"#F8FBFF"}}>{task.title}</div><div style={{fontSize:12,color:plannerTheme.muted,marginTop:4}}>{assigned?.name || "Unassigned"} Â· Due {formatDateLong(task.dueDate)}{task.dueTime ? ` ${displayTimeValue(task.dueTime)}` : ""}</div>{task.detail ? <div style={{fontSize:12,color:plannerTheme.text,marginTop:10,lineHeight:1.55}}>{task.detail}</div> : null}<div style={{display:"flex",gap:8,flexWrap:"wrap",marginTop:10}}><span style={{...plannerPillStyle,color:priorityColor,border:`1px solid ${priorityColor}66`,background:`${priorityColor}12`}}>{task.priority}</span><span style={{...plannerPillStyle,color:statusColor,border:`1px solid ${statusColor}66`,background:`${statusColor}12`}}>{task.status}</span>{linkedProp && <span style={plannerPillStyle}>Job Â· {linkedProp.address}</span>}{linkedClient && <span style={plannerPillStyle}>Client Â· {linkedClient.name}</span>}</div></div><div style={{display:"flex",gap:8,flexWrap:"wrap",alignItems:"center"}}><select value={task.status} onChange={e=>updateTaskStatus(task.id, e.target.value)} style={{...iStyle,padding:"8px 10px",fontSize:12,width:120}} disabled={!canUpdateTaskStatus(task)}>{["To Do","In Progress","Done"].map(s=><option key={s}>{s}</option>)}</select>{(canManageTasks || canEdit) && <button onClick={()=>editTask(task)} style={plannerActionButtonStyle("primary")}>Edit</button>}{canDelete && <button onClick={()=>removeTask(task.id)} style={plannerActionButtonStyle("danger")}>Delete</button>}</div></div></div> })}</div>}
+            {filteredTasks.length===0 ? <div style={plannerEmptyStyle}>No tasks match these filters.</div> : <div style={{display:"flex",flexDirection:"column",gap:10}}>{filteredTasks.map(renderTaskCard)}</div>}
           </div>
         </>
       )}
@@ -8907,3 +8951,4 @@ const btnPurple={background:"linear-gradient(180deg,#7C3AED,#6D28D9)",color:"#F5
 const btnGreen={background:"linear-gradient(180deg,#16A34A,#15803D)",color:"#ECFDF5",border:"1px solid #22C55E",padding:"8px 12px",borderRadius:9,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:800,fontSize:13,letterSpacing:1,cursor:"pointer",boxShadow:"0 8px 18px rgba(22,163,74,0.24)"}
 const btnBlue={background:"linear-gradient(180deg,#2563EB,#1D4ED8)",color:"#EFF6FF",border:"1px solid #60A5FA",padding:"8px 12px",borderRadius:9,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:800,fontSize:13,letterSpacing:1,cursor:"pointer",boxShadow:"0 8px 18px rgba(37,99,235,0.24)"}
 const btnDanger={...btnGray,border:"1px solid #7F1D1D",color:"#FCA5A5",background:"#1F1114"}
+
