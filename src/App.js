@@ -6426,7 +6426,7 @@ function ScheduleTab({ activeUser, currentUser, teamUsers = [], recurringWeeklyS
   const canManageSchedule = isManagerRole && canAdd
   const canManageRecurring = canManageSchedule && canManagePermanent
   const canManageTasks = canManageSchedule
-  const [view, setView] = useState("today")
+  const [view, setView] = useState("mine")
 
   const localNow = new Date()
   const todayDate = new Date(localNow.getTime() - localNow.getTimezoneOffset() * 60000).toISOString().slice(0,10)
@@ -6445,6 +6445,8 @@ function ScheduleTab({ activeUser, currentUser, teamUsers = [], recurringWeeklyS
   const [oneOffForm, setOneOffForm] = useState({ userId:"", date:todayDate, start:"08:00 AM", end:"05:00 PM", title:"Site Assignment", detail:"", type:"supplement" })
   const [taskEditId, setTaskEditId] = useState("")
   const [taskForm, setTaskForm] = useState({ title:"", detail:"", assignedUserId:"", propertyId:"", clientId:"", dueDate:todayDate, dueTime:"", priority:"Normal", status:"To Do" })
+  const [assignmentOpen, setAssignmentOpen] = useState(false)
+  const [assignmentForm, setAssignmentForm] = useState({ type:"oneoff", userId:"", title:"", notes:"", date:todayDate, start:"08:00 AM", end:"05:00 PM", oneOffMode:"supplement", dueDate:todayDate, dueTime:"", priority:"Normal", status:"To Do", repeatRule:"Weekly", endDate:"", days:[todayDay] })
   const denyAccess = () => window.alert("You currently have view-only access. Ask management or the CEO to assign your role and permissions.")
 
   useEffect(() => {
@@ -6456,7 +6458,8 @@ function ScheduleTab({ activeUser, currentUser, teamUsers = [], recurringWeeklyS
     if (!recurringForm.userId) setRecurringForm(f=>({ ...f, userId:teamUsers[0].id }))
     if (!oneOffForm.userId) setOneOffForm(f=>({ ...f, userId:teamUsers[0].id }))
     if (!taskForm.assignedUserId) setTaskForm(f=>({ ...f, assignedUserId:teamUsers[0].id }))
-  }, [teamUsers, recurringForm.userId, oneOffForm.userId, taskForm.assignedUserId])
+    if (!assignmentForm.userId) setAssignmentForm(f=>({ ...f, userId: currentUser?.id || teamUsers[0].id }))
+  }, [teamUsers, recurringForm.userId, oneOffForm.userId, taskForm.assignedUserId, assignmentForm.userId, currentUser?.id])
 
   const toMin = (timeStr) => {
     const t = timeToday(timeStr || "12:00 AM")
@@ -6503,6 +6506,14 @@ function ScheduleTab({ activeUser, currentUser, teamUsers = [], recurringWeeklyS
     .map(user=>({ user, blocks:todayBlocks.filter(b=>b.userId===user.id), tasks:todayTasks.filter(t=>t.assignedUserId===user.id) }))
     .filter(row=>row.blocks.length || row.tasks.length)
 
+  const mineUserId = currentUser?.id || activeUser?.id || ""
+  const mineToday = todayByUser.find(row=>row.user.id===mineUserId) || { user: currentUser || activeUser || null, blocks: todayBlocks.filter(b=>b.userId===mineUserId), tasks: todayTasks.filter(t=>t.assignedUserId===mineUserId) }
+  const mineUpcomingTasks = [...tasks]
+    .map(t=>({ ...t, status:t.status || "To Do", priority:t.priority || "Normal" }))
+    .filter(t=>t.assignedUserId===mineUserId && t.status!=="Done" && `${t.dueDate || ""}` >= todayDate)
+    .sort((a,b)=>`${a.dueDate || "9999-12-31"} ${a.dueTime || "23:59"}`.localeCompare(`${b.dueDate || "9999-12-31"} ${b.dueTime || "23:59"}`))
+    .slice(0,6)
+
   const saveRecurring = () => {
     if (!canManageRecurring) { denyAccess(); return }
     if (!recurringForm.userId || !recurringForm.day || !recurringForm.start || !recurringForm.end) return
@@ -6523,6 +6534,24 @@ function ScheduleTab({ activeUser, currentUser, teamUsers = [], recurringWeeklyS
   const editRecurring = (entry) => {
     setRecurringEditId(entry.id)
     setRecurringForm({ userId: entry.userId || "", day: entry.day || "Mon", start: entry.start || "08:00 AM", end: entry.end || "05:00 PM", note: entry.note || "" })
+    setAssignmentForm({
+      type:"recurring",
+      userId: entry.userId || "",
+      title: entry.note || "",
+      notes: entry.note || "",
+      date:todayDate,
+      start: entry.start || "08:00 AM",
+      end: entry.end || "05:00 PM",
+      oneOffMode:"supplement",
+      dueDate:todayDate,
+      dueTime:"",
+      priority:"Normal",
+      status:"To Do",
+      repeatRule: entry.repeatRule || "Weekly",
+      endDate: entry.endDate || "",
+      days:[entry.day || todayDay]
+    })
+    setAssignmentOpen(true)
   }
   const removeRecurring = (id) => {
     if (!canManageRecurring || !canDelete) { denyAccess(); return }
@@ -6549,7 +6578,25 @@ function ScheduleTab({ activeUser, currentUser, teamUsers = [], recurringWeeklyS
   const editOneOff = (entry) => {
     setOneOffEditId(entry.id)
     setOneOffForm({ userId:entry.userId || "", date:entry.date || todayDate, start:entry.start || "08:00 AM", end:entry.end || "05:00 PM", title:entry.title || "", detail:entry.detail || "", type:entry.type || "supplement" })
-    setView("today")
+    setAssignmentForm({
+      type:"oneoff",
+      userId:entry.userId || "",
+      title:entry.title || "",
+      notes:entry.detail || "",
+      date:entry.date || todayDate,
+      start:entry.start || "08:00 AM",
+      end:entry.end || "05:00 PM",
+      oneOffMode:entry.type || "supplement",
+      dueDate:todayDate,
+      dueTime:"",
+      priority:"Normal",
+      status:"To Do",
+      repeatRule:"Weekly",
+      endDate:"",
+      days:[todayDay]
+    })
+    setAssignmentOpen(true)
+    setView("team")
   }
   const removeOneOff = (id) => {
     if (!canManageSchedule || !canDelete) { denyAccess(); return }
@@ -6583,11 +6630,88 @@ function ScheduleTab({ activeUser, currentUser, teamUsers = [], recurringWeeklyS
   const editTask = (task) => {
     setTaskEditId(task.id)
     setTaskForm({ title:task.title || "", detail:task.detail || "", assignedUserId:task.assignedUserId || "", propertyId:task.propertyId || "", clientId:task.clientId || "", dueDate:task.dueDate || todayDate, dueTime:task.dueTime || "", priority:task.priority || "Normal", status:task.status || "To Do" })
+    setAssignmentForm({
+      type:"task",
+      userId:task.assignedUserId || "",
+      title:task.title || "",
+      notes:task.detail || "",
+      date:todayDate,
+      start:"08:00 AM",
+      end:"05:00 PM",
+      oneOffMode:"supplement",
+      dueDate:task.dueDate || todayDate,
+      dueTime:task.dueTime || "",
+      priority:task.priority || "Normal",
+      status:task.status || "To Do",
+      repeatRule:"Weekly",
+      endDate:"",
+      days:[todayDay]
+    })
+    setAssignmentOpen(true)
     setView("tasks")
   }
   const removeTask = (id) => {
     if (!canDelete) { denyAccess(); return }
     setTasks(prev=>prev.filter(x=>x.id!==id))
+  }
+  const resetAssignmentEditor = (type="oneoff") => {
+    setRecurringEditId("")
+    setOneOffEditId("")
+    setTaskEditId("")
+    setAssignmentForm({
+      type,
+      userId: currentUser?.id || teamUsers[0]?.id || "",
+      title:"",
+      notes:"",
+      date:todayDate,
+      start:"08:00 AM",
+      end:"05:00 PM",
+      oneOffMode:"supplement",
+      dueDate:todayDate,
+      dueTime:"",
+      priority:"Normal",
+      status:"To Do",
+      repeatRule:"Weekly",
+      endDate:"",
+      days:[todayDay]
+    })
+  }
+  const openAssignmentEditor = (type="oneoff") => {
+    resetAssignmentEditor(type)
+    setAssignmentOpen(true)
+  }
+  const saveAssignment = () => {
+    if (!canManageSchedule) { denyAccess(); return }
+    if (!assignmentForm.userId) return
+    if (assignmentForm.type==="recurring") {
+      if (!canManageRecurring) { denyAccess(); return }
+      const days = Array.isArray(assignmentForm.days) && assignmentForm.days.length ? assignmentForm.days : [todayDay]
+      if (!assignmentForm.start || !assignmentForm.end) return
+      const targetDays = recurringEditId ? [assignmentForm.days[0] || todayDay] : days
+      const nextRows = recurringEditId
+        ? recurringWeeklySchedule.map(row=>row.id!==recurringEditId ? row : { ...row, userId:assignmentForm.userId, day:targetDays[0], start:assignmentForm.start, end:assignmentForm.end, note:(assignmentForm.title || assignmentForm.notes).trim(), repeatRule:assignmentForm.repeatRule || "Weekly", endDate:assignmentForm.endDate || "" })
+        : [
+            ...recurringWeeklySchedule,
+            ...targetDays.map(day=>({ id:uid(), userId:assignmentForm.userId, day, start:assignmentForm.start, end:assignmentForm.end, note:(assignmentForm.title || assignmentForm.notes).trim(), repeatRule:assignmentForm.repeatRule || "Weekly", endDate:assignmentForm.endDate || "", createdBy:currentUser?.id || "", createdAt:now() }))
+          ]
+      setRecurringWeeklySchedule(nextRows)
+      setAssignmentOpen(false)
+      resetAssignmentEditor("recurring")
+      return
+    }
+    if (assignmentForm.type==="oneoff") {
+      if (!assignmentForm.date || !assignmentForm.start || !assignmentForm.end || !assignmentForm.title.trim()) return
+      const payload = { id: oneOffEditId || uid(), userId: assignmentForm.userId, date: assignmentForm.date, start: assignmentForm.start, end: assignmentForm.end, title: assignmentForm.title.trim(), detail: assignmentForm.notes.trim(), type: assignmentForm.oneOffMode || "supplement", createdBy: currentUser?.id || "", createdAt: oneOffEditId ? (oneOffScheduleBlocks.find(x=>x.id===oneOffEditId)?.createdAt || now()) : now() }
+      setOneOffScheduleBlocks(prev=> oneOffEditId ? prev.map(x=>x.id===oneOffEditId ? payload : x) : [...prev, payload])
+      setAssignmentOpen(false)
+      resetAssignmentEditor("oneoff")
+      return
+    }
+    if (!assignmentForm.title.trim() || !assignmentForm.dueDate) return
+    const payload = { id: taskEditId || uid(), title: assignmentForm.title.trim(), detail: assignmentForm.notes.trim(), assignedUserId: assignmentForm.userId, propertyId:"", clientId:"", dueDate: assignmentForm.dueDate, dueTime: assignmentForm.dueTime || "", priority: assignmentForm.priority || "Normal", status: assignmentForm.status || "To Do", createdAt: taskEditId ? (tasks.find(x=>x.id===taskEditId)?.createdAt || now()) : now() }
+    setTasks(prev=> taskEditId ? prev.map(x=>x.id===taskEditId ? payload : x) : [payload, ...prev])
+    setAssignmentOpen(false)
+    resetAssignmentEditor("task")
   }
   const canUpdateTaskStatus = (task) => canEdit || task.assignedUserId===currentUser?.id
   const updateTaskStatus = (id, status) => {
@@ -6766,15 +6890,15 @@ function ScheduleTab({ activeUser, currentUser, teamUsers = [], recurringWeeklyS
           <div style={{minWidth:0}}>
             <div style={{fontSize:16,fontWeight:800,color:"#F8FBFF",lineHeight:1.3,wordBreak:"break-word",overflowWrap:"anywhere"}}>{task.title}</div>
             <div style={{fontSize:12,color:plannerTheme.muted,marginTop:5,lineHeight:1.5}}>
-              {(assigned?.name || "Unassigned") + " ∑ Due " + formatDateLong(task.dueDate)}{task.dueTime ? ` ${displayTimeValue(task.dueTime)}` : ""}
+              {(assigned?.name || "Unassigned") + " ¬∑ Due " + formatDateLong(task.dueDate)}{task.dueTime ? ` ${displayTimeValue(task.dueTime)}` : ""}
             </div>
           </div>
           {task.detail ? <div style={{fontSize:12,color:plannerTheme.text,lineHeight:1.6,wordBreak:"break-word",overflowWrap:"anywhere"}}>{task.detail}</div> : null}
           <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
             <span style={{...plannerPillStyle,color:priorityColor,border:`1px solid ${priorityColor}66`,background:`${priorityColor}12`}}>{task.priority}</span>
             <span style={{...plannerPillStyle,color:statusColor,border:`1px solid ${statusColor}66`,background:`${statusColor}12`}}>{task.status}</span>
-            {linkedProp && <span style={plannerPillStyle}>{`Job ∑ ${linkedProp.address}`}</span>}
-            {linkedClient && <span style={plannerPillStyle}>{`Client ∑ ${linkedClient.name}`}</span>}
+            {linkedProp && <span style={plannerPillStyle}>{`Job ¬∑ ${linkedProp.address}`}</span>}
+            {linkedClient && <span style={plannerPillStyle}>{`Client ¬∑ ${linkedClient.name}`}</span>}
           </div>
           <div style={{display:"flex",gap:8,flexWrap:"wrap",alignItems:"stretch"}}>
             <select value={task.status} onChange={e=>updateTaskStatus(task.id, e.target.value)} style={{...iStyle,padding:"8px 10px",fontSize:12,width:isMobile?"100%":132,flex:isMobile ? "1 1 100%" : "0 0 auto"}} disabled={!canUpdateTaskStatus(task)}>{["To Do","In Progress","Done"].map(s=><option key={s}>{s}</option>)}</select>
@@ -6818,13 +6942,74 @@ function ScheduleTab({ activeUser, currentUser, teamUsers = [], recurringWeeklyS
         </div>
       </div>
 
-      <div style={{display:"grid",gridTemplateColumns:isMobile?"repeat(2,minmax(0,1fr))":"repeat(4,minmax(0,1fr))",gap:10,marginBottom:sectionMargin}}>
-        {[{ key:"today", label:"Today" },{ key:"week", label:"Week" },{ key:"tasks", label:"Tasks" },{ key:"recurring", label:"Recurring" }].map(item=>(
+      <div style={{display:"grid",gridTemplateColumns:isMobile?"repeat(2,minmax(0,1fr))":"repeat(5,minmax(0,1fr))",gap:10,marginBottom:sectionMargin}}>
+        {[{ key:"mine", label:"Mine" },{ key:"team", label:"Team" },{ key:"week", label:"Week" },{ key:"recurring", label:"Recurring" },{ key:"tasks", label:"Tasks" }].map(item=>(
           <button key={item.key} onClick={()=>setView(item.key)} style={{...buttonStyle,minHeight:isMobile?52:56,borderRadius:18,padding:"10px 14px",background:view===item.key ? "linear-gradient(180deg,#18314A,#122537)" : plannerTheme.panel,border:view===item.key ? "1px solid rgba(105,212,255,0.42)" : `1px solid ${plannerTheme.border}`,color:view===item.key ? "#E8F8FF" : plannerTheme.muted,boxShadow:view===item.key ? "0 14px 28px rgba(2,132,199,0.18)" : "none",fontSize:14,letterSpacing:0.5}}>{item.label}</button>
         ))}
       </div>
 
-      {(view==="today" || view==="week") && canManageSchedule && (
+      <div style={{...plannerPanelStyle,marginBottom:sectionMargin}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:12,flexWrap:"wrap",marginBottom:14}}>
+          <div>
+            <div style={plannerEyebrowStyle}>Assign Flow</div>
+            <div style={plannerHeadingStyle}>Unified Assignment Planner</div>
+            <div style={plannerSubheadingStyle}>Use one shared flow to assign recurring work, one-off schedule blocks, or tasks.</div>
+          </div>
+          {canManageSchedule ? <button onClick={()=>openAssignmentEditor("oneoff")} style={{...plannerActionButtonStyle("primary"),minHeight:44,minWidth:isMobile?"100%":160}}>Add Assignment</button> : null}
+        </div>
+        {assignmentOpen ? (
+          <div style={{display:"flex",flexDirection:"column",gap:sectionGap}}>
+            <div style={{display:"grid",gridTemplateColumns:isMobile?"1fr":"repeat(3,minmax(0,1fr))",gap:10}}>
+              {[{key:"recurring",label:"Recurring"},{key:"oneoff",label:"One-Off"},{key:"task",label:"Task"}].map(type=>(
+                <button key={type.key} onClick={()=>setAssignmentForm(f=>({...f,type:type.key}))} style={{...buttonStyle,minHeight:48,borderRadius:16,padding:"10px 14px",background:assignmentForm.type===type.key ? "linear-gradient(180deg,#18314A,#122537)" : plannerTheme.surface,border:assignmentForm.type===type.key ? "1px solid rgba(105,212,255,0.42)" : `1px solid ${plannerTheme.border}`,color:assignmentForm.type===type.key ? "#E8F8FF" : plannerTheme.muted}}>{type.label}</button>
+              ))}
+            </div>
+            <div style={plannerInputGridStyle(assignmentForm.type==="task" ? "1fr 1fr" : "1fr 1fr 1fr")}>
+              <select value={assignmentForm.userId} onChange={e=>setAssignmentForm(f=>({...f,userId:e.target.value}))} style={iStyle}><option value="">Assign User</option>{teamUsers.map(u=><option key={u.id} value={u.id}>{u.name}</option>)}</select>
+              <input value={assignmentForm.title} onChange={e=>setAssignmentForm(f=>({...f,title:e.target.value}))} placeholder={assignmentForm.type==="task" ? "Task title" : "Assignment title"} style={iStyle} />
+              {assignmentForm.type==="task" ? null : <input value={assignmentForm.notes} onChange={e=>setAssignmentForm(f=>({...f,notes:e.target.value}))} placeholder="Notes / description" style={iStyle} />}
+            </div>
+            {assignmentForm.type==="task" ? <textarea value={assignmentForm.notes} onChange={e=>setAssignmentForm(f=>({...f,notes:e.target.value}))} placeholder="Notes / description" rows={3} style={{...iStyle,resize:"vertical",lineHeight:1.45}} /> : null}
+            {assignmentForm.type==="recurring" ? (
+              <>
+                <div style={{display:"grid",gridTemplateColumns:isMobile?"repeat(2,minmax(0,1fr))":"repeat(7,minmax(0,1fr))",gap:8}}>
+                  {WEEK_DAYS.map(day=>{ const active = assignmentForm.days.includes(day); return <button key={day} onClick={()=>setAssignmentForm(f=>({ ...f, days: active ? f.days.filter(x=>x!==day) : [...f.days, day] }))} style={{...buttonStyle,minHeight:44,borderRadius:14,padding:"8px 10px",background:active ? "linear-gradient(180deg,#18314A,#122537)" : plannerTheme.surface,border:active ? "1px solid rgba(105,212,255,0.42)" : `1px solid ${plannerTheme.border}`,color:active ? "#E8F8FF" : plannerTheme.muted}}>{day}</button>})}
+                </div>
+                <div style={plannerInputGridStyle("1fr 1fr 1fr 1fr")}>
+                  <TimePicker value={assignmentForm.start} onChange={value=>setAssignmentForm(f=>({...f,start:value}))} />
+                  <TimePicker value={assignmentForm.end} onChange={value=>setAssignmentForm(f=>({...f,end:value}))} />
+                  <select value={assignmentForm.repeatRule} onChange={e=>setAssignmentForm(f=>({...f,repeatRule:e.target.value}))} style={iStyle}><option>Weekly</option><option>Biweekly</option><option>Custom</option></select>
+                  <input type="date" value={assignmentForm.endDate} onChange={e=>setAssignmentForm(f=>({...f,endDate:e.target.value}))} style={iStyle} />
+                </div>
+                <textarea value={assignmentForm.notes} onChange={e=>setAssignmentForm(f=>({...f,notes:e.target.value}))} placeholder="Notes / description" rows={3} style={{...iStyle,resize:"vertical",lineHeight:1.45}} />
+              </>
+            ) : null}
+            {assignmentForm.type==="oneoff" ? (
+              <div style={plannerInputGridStyle("1fr 1fr 1fr 1fr 1fr")}>
+                <input type="date" value={assignmentForm.date} onChange={e=>setAssignmentForm(f=>({...f,date:e.target.value}))} style={iStyle} />
+                <TimePicker value={assignmentForm.start} onChange={value=>setAssignmentForm(f=>({...f,start:value}))} />
+                <TimePicker value={assignmentForm.end} onChange={value=>setAssignmentForm(f=>({...f,end:value}))} />
+                <select value={assignmentForm.oneOffMode} onChange={e=>setAssignmentForm(f=>({...f,oneOffMode:e.target.value}))} style={iStyle}><option value="supplement">Supplement</option><option value="override">Override</option></select>
+                <textarea value={assignmentForm.notes} onChange={e=>setAssignmentForm(f=>({...f,notes:e.target.value}))} placeholder="Notes / description" rows={2} style={{...iStyle,resize:"vertical",lineHeight:1.45}} />
+              </div>
+            ) : null}
+            {assignmentForm.type==="task" ? (
+              <div style={plannerInputGridStyle("1fr 1fr 1fr 1fr")}>
+                <input type="date" value={assignmentForm.dueDate} onChange={e=>setAssignmentForm(f=>({...f,dueDate:e.target.value}))} style={iStyle} />
+                <TimePicker value={assignmentForm.dueTime} onChange={value=>setAssignmentForm(f=>({...f,dueTime:value}))} allowEmpty storageFormat="24h" />
+                <select value={assignmentForm.priority} onChange={e=>setAssignmentForm(f=>({...f,priority:e.target.value}))} style={iStyle}>{["Low","Normal","High","Urgent"].map(p=><option key={p}>{p}</option>)}</select>
+                <select value={assignmentForm.status} onChange={e=>setAssignmentForm(f=>({...f,status:e.target.value}))} style={iStyle}>{["To Do","In Progress","Done"].map(s=><option key={s}>{s}</option>)}</select>
+              </div>
+            ) : null}
+            <div style={{display:"flex",gap:8,flexWrap:"wrap",justifyContent:isMobile?"stretch":"flex-end"}}>
+              <button onClick={()=>{setAssignmentOpen(false);resetAssignmentEditor(assignmentForm.type)}} style={{...plannerActionButtonStyle(),flex:isMobile?"1 1 0":"0 0 auto"}}>Cancel</button>
+              <button onClick={saveAssignment} style={{...plannerActionButtonStyle("primary"),flex:isMobile?"1 1 0":"0 0 auto"}}>{recurringEditId || oneOffEditId || taskEditId ? "Save Assignment" : "Create Assignment"}</button>
+            </div>
+          </div>
+        ) : <div style={plannerEmptyStyle}>Start with ‚ÄúAdd Assignment,‚Äù choose a type, then assign it without jumping between separate planner systems.</div>}
+      </div>
+
+      {false && (view==="today" || view==="week") && canManageSchedule && (
         <div style={{...plannerPanelStyle,marginBottom:sectionMargin}}>
           <div style={{marginBottom:14}}>
             <div style={{...plannerEyebrowStyle,color:plannerTheme.success}}>Operations Input</div>
@@ -6844,11 +7029,45 @@ function ScheduleTab({ activeUser, currentUser, teamUsers = [], recurringWeeklyS
         </div>
       )}
 
-      {view==="today" && (
+      {view==="mine" && (
         <>
           <div style={{...plannerPanelStyle,marginBottom:sectionMargin}}>
             <div style={{marginBottom:14}}>
-              <div style={plannerEyebrowStyle}>Today</div>
+              <div style={plannerEyebrowStyle}>My Day</div>
+              <div style={plannerHeadingStyle}>My Assignments</div>
+              <div style={plannerSubheadingStyle}>Your schedule and tasks for {formatDateLong(todayDate)}, with upcoming tasks kept lightweight and focused.</div>
+            </div>
+            <div style={{display:"grid",gridTemplateColumns:isMobile?"1fr":"1.1fr 0.9fr",gap:12}}>
+              <div style={plannerPersonCardStyle}>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:12,marginBottom:12}}>
+                  <div>
+                    <div style={{fontSize:isMobile ? 18 : 20,fontWeight:800,color:"#F8FBFF"}}>{mineToday.user?.name || currentUser?.name || "My Schedule"}</div>
+                    <div style={{fontSize:11,color:plannerTheme.muted,marginTop:4,textTransform:"uppercase",letterSpacing:0.6}}>Today&apos;s schedule</div>
+                  </div>
+                  <div style={plannerPillStyle}>{mineToday.blocks.length} blocks</div>
+                </div>
+                {mineToday.blocks.length===0 ? <div style={plannerEmptyStyle}>No schedule items assigned for today.</div> : <div style={{display:"flex",flexDirection:"column",gap:10}}>{mineToday.blocks.map(block=>renderScheduleItem(block,{ key:`mine-block-${block.id}`, title:block.title || "Shift", subtitle:block.detail || "", accentColor:block.source==="oneoff" ? plannerTheme.success : plannerTheme.accent, badgeLabel:block.source==="oneoff" ? "One-Off" : "Recurring" }))}</div>}
+              </div>
+              <div style={plannerPersonCardStyle}>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:12,marginBottom:12}}>
+                  <div>
+                    <div style={{fontSize:isMobile ? 18 : 20,fontWeight:800,color:"#F8FBFF"}}>My Tasks</div>
+                    <div style={{fontSize:11,color:plannerTheme.muted,marginTop:4,textTransform:"uppercase",letterSpacing:0.6}}>Today and upcoming</div>
+                  </div>
+                  <div style={plannerPillStyle}>{mineUpcomingTasks.length} open</div>
+                </div>
+                {mineUpcomingTasks.length===0 ? <div style={plannerEmptyStyle}>No open tasks assigned to you.</div> : <div style={{display:"flex",flexDirection:"column",gap:10}}>{mineUpcomingTasks.map(renderTaskCard)}</div>}
+              </div>
+            </div>
+          </div>
+        </>
+      )}
+
+      {view==="team" && (
+        <>
+          <div style={{...plannerPanelStyle,marginBottom:sectionMargin}}>
+            <div style={{marginBottom:14}}>
+              <div style={plannerEyebrowStyle}>Team Day</div>
               <div style={plannerHeadingStyle}>Daily Crew Overview</div>
               <div style={plannerSubheadingStyle}>{formatDateLong(todayDate)} grouped by person for fast field scanning.</div>
             </div>
@@ -6888,7 +7107,7 @@ function ScheduleTab({ activeUser, currentUser, teamUsers = [], recurringWeeklyS
               <select value={oneOffFilterUser} onChange={e=>setOneOffFilterUser(e.target.value)} style={iStyle}><option value="All">All Users</option>{teamUsers.map(u=><option key={u.id} value={u.id}>{u.name}</option>)}</select>
             </div>
             <div style={{height:12}} />
-            {oneOffFiltered.length===0 ? <div style={plannerEmptyStyle}>No matching one-off blocks.</div> : <div style={{display:"flex",flexDirection:"column",gap:10}}>{oneOffFiltered.map(entry=>renderScheduleItem(entry,{ key:`oneoff-${entry.id}`, title:`${entry.userName} ∑ ${entry.title}`, subtitle:`${formatDateLong(entry.date)}${entry.detail ? ` ∑ ${entry.detail}` : ""}`, accentColor:entry.type==="override" ? plannerTheme.warning : plannerTheme.success, badgeLabel:entry.type==="override" ? "Override" : "Supplement", onEdit:canManageSchedule && canEdit ? ()=>editOneOff(entry) : null, onDelete:canManageSchedule && canDelete ? ()=>removeOneOff(entry.id) : null }))}</div>}
+            {oneOffFiltered.length===0 ? <div style={plannerEmptyStyle}>No matching one-off blocks.</div> : <div style={{display:"flex",flexDirection:"column",gap:10}}>{oneOffFiltered.map(entry=>renderScheduleItem(entry,{ key:`oneoff-${entry.id}`, title:`${entry.userName} ÔøΩ ${entry.title}`, subtitle:`${formatDateLong(entry.date)}${entry.detail ? ` ÔøΩ ${entry.detail}` : ""}`, accentColor:entry.type==="override" ? plannerTheme.warning : plannerTheme.success, badgeLabel:entry.type==="override" ? "Override" : "Supplement", onEdit:canManageSchedule && canEdit ? ()=>editOneOff(entry) : null, onDelete:canManageSchedule && canDelete ? ()=>removeOneOff(entry.id) : null }))}</div>}
           </div>
         </>
       )}
@@ -6908,7 +7127,7 @@ function ScheduleTab({ activeUser, currentUser, teamUsers = [], recurringWeeklyS
 
       {view==="tasks" && (
         <>
-          {canManageTasks && (
+          {false && canManageTasks && (
             <div style={{...plannerPanelStyle,marginBottom:sectionMargin}}>
               <div style={{marginBottom:14}}>
                 <div style={{...plannerEyebrowStyle,color:plannerTheme.success}}>Task Input</div>
@@ -6964,7 +7183,7 @@ function ScheduleTab({ activeUser, currentUser, teamUsers = [], recurringWeeklyS
 
       {view==="recurring" && (
         <>
-          {canManageRecurring && (
+          {false && canManageRecurring && (
             <div style={{...plannerPanelStyle,marginBottom:sectionMargin}}>
               <div style={{marginBottom:14}}>
                 <div style={plannerEyebrowStyle}>Recurring Input</div>
