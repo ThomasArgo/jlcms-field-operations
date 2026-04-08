@@ -6419,7 +6419,6 @@ function TimePicker({ value, onChange, style, allowEmpty=false, storageFormat="1
 /* -------------------------- SCHEDULE TAB -------------------------- */
 function ScheduleTab({ activeUser, currentUser, teamUsers = [], recurringWeeklySchedule = [], setRecurringWeeklySchedule, oneOffScheduleBlocks = [], setOneOffScheduleBlocks, tasks = [], setTasks, properties = [], clients = [], canAdd=true, canEdit=true, canDelete=true, canManagePermanent=false, fireNotif, onImmediateOneTimeAlert }) {
   const { isPhone: isMobile } = viewportInfo()
-  const sectionPad = isMobile ? 10 : 14
   const sectionGap = isMobile ? 8 : 10
   const sectionMargin = isMobile ? 12 : 16
   const userRole = String(currentUser?.role || "").toLowerCase()
@@ -6503,8 +6502,6 @@ function ScheduleTab({ activeUser, currentUser, teamUsers = [], recurringWeeklyS
   const todayByUser = teamUsers
     .map(user=>({ user, blocks:todayBlocks.filter(b=>b.userId===user.id), tasks:todayTasks.filter(t=>t.assignedUserId===user.id) }))
     .filter(row=>row.blocks.length || row.tasks.length)
-
-  const weekRows = weekDays.map(day=>({ ...day, blocks:getBlocksForDate(day.date, day.day) }))
 
   const saveRecurring = () => {
     if (!canManageRecurring) { denyAccess(); return }
@@ -6608,26 +6605,189 @@ function ScheduleTab({ activeUser, currentUser, teamUsers = [], recurringWeeklyS
     .sort((a,b)=>`${a.dueDate || "9999-12-31"} ${a.dueTime || "23:59"}`.localeCompare(`${b.dueDate || "9999-12-31"} ${b.dueTime || "23:59"}`))
 
   const oneOffFiltered = oneOffRows.filter(r=>oneOffFilterUser==="All" || r.userId===oneOffFilterUser).filter(r=>!taskDateFilter || r.date===taskDateFilter)
+  const groupEntriesByPerson = (entries=[]) => Object.values(
+    entries.reduce((acc, entry) => {
+      if (!entry?.userId) return acc
+      if (!acc[entry.userId]) {
+        acc[entry.userId] = {
+          userId: entry.userId,
+          userName: entry.userName || "Team Member",
+          userRole: userMap[entry.userId]?.role || "",
+          items: []
+        }
+      }
+      acc[entry.userId].items.push(entry)
+      return acc
+    }, {})
+  )
+    .map(group=>({ ...group, items:[...group.items].sort((a,b)=>toMin(a.start)-toMin(b.start)) }))
+    .sort((a,b)=>a.userName.localeCompare(b.userName))
+
+  const recurringDayGroups = WEEK_DAYS.map(day=>({ day, people: groupEntriesByPerson(recurringRows.filter(entry=>entry.day===day)) }))
+  const weekRows = weekDays.map(day=>({ ...day, people: groupEntriesByPerson(getBlocksForDate(day.date, day.day)) }))
+
+  const plannerTheme = {
+    panel:"#0C1827",
+    panelAlt:"#101D2D",
+    item:"#16283A",
+    border:"rgba(148,163,184,0.18)",
+    borderStrong:"rgba(148,163,184,0.28)",
+    text:"#E5EEF8",
+    muted:"#8FA3B8",
+    faint:"#5F748A",
+    accent:"#38BDF8",
+    accentSoft:"rgba(56,189,248,0.16)",
+    success:"#34D399",
+    warning:"#FBBF24",
+    danger:"#F87171",
+    shadow:"0 18px 42px rgba(2,6,23,0.34)"
+  }
+  const plannerPanelStyle = {
+    background:`linear-gradient(180deg, ${plannerTheme.panel} 0%, ${plannerTheme.panelAlt} 100%)`,
+    border:`1px solid ${plannerTheme.border}`,
+    borderRadius:isMobile ? 22 : 24,
+    padding:isMobile ? 16 : 20,
+    boxShadow:plannerTheme.shadow
+  }
+  const plannerDayCardStyle = {
+    background:"linear-gradient(180deg, rgba(18,33,50,0.98) 0%, rgba(12,24,39,0.98) 100%)",
+    border:`1px solid ${plannerTheme.border}`,
+    borderRadius:isMobile ? 20 : 22,
+    padding:isMobile ? 14 : 16
+  }
+  const plannerPersonCardStyle = {
+    background:"linear-gradient(180deg, rgba(17,30,45,0.96) 0%, rgba(12,23,36,0.96) 100%)",
+    border:`1px solid ${plannerTheme.borderStrong}`,
+    borderRadius:isMobile ? 18 : 20,
+    padding:isMobile ? 12 : 14
+  }
+  const plannerItemRowStyle = {
+    display:"flex",
+    alignItems:"flex-start",
+    justifyContent:"space-between",
+    gap:10,
+    padding:isMobile ? "11px 12px" : "12px 13px",
+    background:plannerTheme.item,
+    border:`1px solid ${plannerTheme.border}`,
+    borderRadius:16
+  }
+  const plannerTimeBadgeStyle = {
+    minWidth:isMobile ? 98 : 110,
+    display:"inline-flex",
+    alignItems:"center",
+    justifyContent:"center",
+    padding:"8px 10px",
+    borderRadius:14,
+    background:plannerTheme.accentSoft,
+    border:"1px solid rgba(56,189,248,0.24)",
+    color:"#D7F4FF",
+    fontSize:11,
+    fontWeight:700,
+    whiteSpace:"nowrap"
+  }
+  const plannerPillStyle = {
+    display:"inline-flex",
+    alignItems:"center",
+    gap:6,
+    padding:"5px 9px",
+    borderRadius:999,
+    border:`1px solid ${plannerTheme.border}`,
+    background:"rgba(15,23,42,0.55)",
+    color:plannerTheme.muted,
+    fontSize:10,
+    fontWeight:700,
+    letterSpacing:0.7,
+    textTransform:"uppercase"
+  }
+  const plannerActionButtonStyle = (variant="neutral") => ({
+    ...(variant==="primary" ? btnBlue : variant==="danger" ? btnDanger : btnGray),
+    padding:isMobile ? "8px 12px" : "7px 11px",
+    fontSize:12,
+    borderRadius:12,
+    letterSpacing:0.5,
+    boxShadow:"none",
+    minHeight:36
+  })
+  const plannerEmptyStyle = {
+    padding:"14px 12px",
+    borderRadius:16,
+    border:`1px dashed ${plannerTheme.border}`,
+    background:"rgba(9,15,25,0.34)",
+    color:plannerTheme.faint,
+    fontSize:12
+  }
+  const plannerInputGridStyle = (desktopCols) => ({ display:"grid", gridTemplateColumns:isMobile ? "1fr" : desktopCols, gap:sectionGap })
+  const plannerEyebrowStyle = { fontSize:11, fontWeight:700, letterSpacing:1.4, textTransform:"uppercase", color:plannerTheme.accent }
+  const plannerHeadingStyle = { fontFamily:"'Barlow Condensed',sans-serif", fontSize:isMobile ? 20 : 24, fontWeight:800, letterSpacing:0.6, color:"#F8FBFF" }
+  const plannerSubheadingStyle = { fontSize:12, color:plannerTheme.muted, lineHeight:1.5 }
+
+  const renderItemActions = (onEdit, onDelete) => {
+    if (!onEdit && !onDelete) return null
+    return <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>{onEdit ? <button onClick={onEdit} style={plannerActionButtonStyle("primary")}>Edit</button> : null}{onDelete ? <button onClick={onDelete} style={plannerActionButtonStyle("danger")}>Delete</button> : null}</div>
+  }
+
+  const renderScheduleItem = (item, options={}) => (
+    <div key={options.key || item.id} style={plannerItemRowStyle}>
+      <div style={{display:"flex",gap:12,alignItems:"flex-start",flex:1,minWidth:0}}>
+        <div style={plannerTimeBadgeStyle}>{item.start} - {item.end}</div>
+        <div style={{minWidth:0,flex:1}}>
+          <div style={{fontSize:13,fontWeight:700,color:"#F7FAFC",lineHeight:1.35,wordBreak:"break-word"}}>{options.title}</div>
+          {options.subtitle ? <div style={{fontSize:12,color:plannerTheme.muted,marginTop:4,lineHeight:1.45,wordBreak:"break-word"}}>{options.subtitle}</div> : null}
+        </div>
+      </div>
+      <div style={{display:"flex",flexDirection:"column",alignItems:isMobile?"stretch":"flex-end",gap:8,flexShrink:0}}>
+        <span style={{...plannerPillStyle,color:options.accentColor,border:`1px solid ${options.accentColor}55`,background:`${options.accentColor}12`}}>{options.badgeLabel}</span>
+        {renderItemActions(options.onEdit, options.onDelete)}
+      </div>
+    </div>
+  )
+
+  const renderPersonGroup = (group, itemRenderer, key) => (
+    <div key={key || group.userId} style={plannerPersonCardStyle}>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:12,marginBottom:12}}>
+        <div>
+          <div style={{fontSize:isMobile ? 18 : 20,fontWeight:800,color:"#F8FBFF"}}>{group.userName}</div>
+          <div style={{fontSize:11,color:plannerTheme.muted,marginTop:4,letterSpacing:0.5,textTransform:"uppercase"}}>{roleLabel(group.userRole || "member")}</div>
+        </div>
+        <div style={plannerPillStyle}>{group.items.length} {group.items.length===1 ? "item" : "items"}</div>
+      </div>
+      <div style={{display:"flex",flexDirection:"column",gap:10}}>
+        {group.items.map(itemRenderer)}
+      </div>
+    </div>
+  )
 
   return (
     <div style={pageShell(1120)}>
-      <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-end",gap:10,flexWrap:"wrap",marginBottom:16}}>
-        <div>
-          <div style={{fontFamily:"'Barlow Condensed',sans-serif",fontWeight:900,fontSize:isMobile?26:30,color:"#F97316",letterSpacing:2}}>OPERATIONS PLANNER</div>
-          <div style={{fontSize:12,color:"#6B7280",fontFamily:"'IBM Plex Mono',monospace"}}>Schedule and task assignments for field operations</div>
+      <div style={{...plannerPanelStyle,marginBottom:sectionMargin,background:"linear-gradient(140deg,#07111D 0%,#0B1726 52%,#13263A 100%)"}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-end",gap:12,flexWrap:"wrap"}}>
+          <div>
+            <div style={{fontSize:11,fontWeight:700,letterSpacing:1.8,textTransform:"uppercase",color:"#69D4FF",marginBottom:6}}>Field Operations</div>
+            <div style={{fontFamily:"'Barlow Condensed',sans-serif",fontWeight:900,fontSize:isMobile?28:36,color:"#F8FBFF",letterSpacing:0.8,lineHeight:1}}>Operations Planner</div>
+            <div style={{fontSize:13,color:"#8FA3B8",marginTop:8,maxWidth:640,lineHeight:1.55}}>Recurring schedules, day plans, and task assignments in one dark mobile-first operations dashboard.</div>
+          </div>
+          <div style={{display:"flex",gap:10,flexWrap:"wrap"}}>
+            <div style={plannerPillStyle}>{teamUsers.length} team members</div>
+            <div style={plannerPillStyle}>{recurringRows.length} recurring blocks</div>
+            <div style={plannerPillStyle}>{oneOffRows.length} one-off blocks</div>
+          </div>
         </div>
       </div>
 
-      <div style={{display:"grid",gridTemplateColumns:isMobile?"repeat(2,minmax(0,1fr))":"repeat(4,minmax(0,140px))",gap:8,marginBottom:sectionMargin}}>
+      <div style={{display:"grid",gridTemplateColumns:isMobile?"repeat(2,minmax(0,1fr))":"repeat(4,minmax(0,1fr))",gap:10,marginBottom:sectionMargin}}>
         {[{ key:"today", label:"Today" },{ key:"week", label:"Week" },{ key:"tasks", label:"Tasks" },{ key:"recurring", label:"Recurring" }].map(item=>(
-          <button key={item.key} onClick={()=>setView(item.key)} style={{...buttonStyle,padding:"8px 10px",background:view===item.key ? "#0C1117" : "#111827",border:view===item.key ? "1px solid #F97316" : "1px solid #1F2937",color:view===item.key ? "#F97316" : "#9CA3AF"}}>{item.label}</button>
+          <button key={item.key} onClick={()=>setView(item.key)} style={{...buttonStyle,minHeight:isMobile?52:56,borderRadius:18,padding:"10px 14px",background:view===item.key ? "linear-gradient(180deg,#18314A,#122537)" : plannerTheme.panel,border:view===item.key ? "1px solid rgba(105,212,255,0.42)" : `1px solid ${plannerTheme.border}`,color:view===item.key ? "#E8F8FF" : plannerTheme.muted,boxShadow:view===item.key ? "0 14px 28px rgba(2,132,199,0.18)" : "none",fontSize:14,letterSpacing:0.5}}>{item.label}</button>
         ))}
       </div>
 
       {(view==="today" || view==="week") && canManageSchedule && (
-        <div style={{background:"#111827",border:"1px solid #1F2937",borderRadius:8,padding:sectionPad,marginBottom:sectionMargin}}>
-          <div style={{fontFamily:"'Barlow Condensed',sans-serif",fontWeight:900,fontSize:16,color:"#34D399",letterSpacing:1,marginBottom:8}}>ONE-OFF SCHEDULE BLOCK</div>
-          <div style={{display:"grid",gridTemplateColumns:isMobile?"1fr":"1.2fr 1fr 1fr 1fr 1fr 1.2fr 1.2fr auto",gap:sectionGap}}>
+        <div style={{...plannerPanelStyle,marginBottom:sectionMargin}}>
+          <div style={{marginBottom:14}}>
+            <div style={{...plannerEyebrowStyle,color:plannerTheme.success}}>Operations Input</div>
+            <div style={plannerHeadingStyle}>One-Off Schedule Block</div>
+            <div style={plannerSubheadingStyle}>Create supplemental or override assignments without leaving the planner.</div>
+          </div>
+          <div style={plannerInputGridStyle("1.15fr 0.95fr 0.9fr 0.9fr 0.9fr 1.15fr 1.15fr auto")}>
             <select value={oneOffForm.userId} onChange={e=>setOneOffForm(f=>({...f,userId:e.target.value}))} style={iStyle}><option value="">Select User</option>{teamUsers.map(u=><option key={u.id} value={u.id}>{u.name}</option>)}</select>
             <input type="date" value={oneOffForm.date} onChange={e=>setOneOffForm(f=>({...f,date:e.target.value}))} style={iStyle} />
             <TimePicker value={oneOffForm.start} onChange={value=>setOneOffForm(f=>({...f,start:value}))} />
@@ -6635,46 +6795,69 @@ function ScheduleTab({ activeUser, currentUser, teamUsers = [], recurringWeeklyS
             <select value={oneOffForm.type} onChange={e=>setOneOffForm(f=>({...f,type:e.target.value}))} style={iStyle}><option value="supplement">Supplement</option><option value="override">Override</option></select>
             <input value={oneOffForm.title} onChange={e=>setOneOffForm(f=>({...f,title:e.target.value}))} placeholder="Title" style={iStyle} />
             <input value={oneOffForm.detail} onChange={e=>setOneOffForm(f=>({...f,detail:e.target.value}))} placeholder="Detail" style={iStyle} />
-            <button onClick={saveOneOff} style={btnGreen}>{oneOffEditId ? "Save" : "Add"}</button>
+            <button onClick={saveOneOff} style={{...plannerActionButtonStyle("primary"),minHeight:isMobile?44:48}}>{oneOffEditId ? "Save" : "Add"}</button>
           </div>
         </div>
       )}
 
       {view==="today" && (
         <>
-          <div style={{...cardStyle,padding:sectionPad,marginBottom:sectionMargin}}>
-            <div style={{fontFamily:"'Barlow Condensed',sans-serif",fontWeight:900,fontSize:16,color:"#60A5FA",letterSpacing:1,marginBottom:8}}>TODAY OVERVIEW - {formatDateLong(todayDate)}</div>
-            {todayByUser.length===0 ? <div style={{fontSize:12,color:"#6B7280"}}>No schedule blocks or due tasks for today.</div> : (
-              <div style={{display:"grid",gridTemplateColumns:isMobile?"1fr":"repeat(auto-fill,minmax(330px,1fr))",gap:sectionGap}}>
+          <div style={{...plannerPanelStyle,marginBottom:sectionMargin}}>
+            <div style={{marginBottom:14}}>
+              <div style={plannerEyebrowStyle}>Today</div>
+              <div style={plannerHeadingStyle}>Daily Crew Overview</div>
+              <div style={plannerSubheadingStyle}>{formatDateLong(todayDate)} grouped by person for fast field scanning.</div>
+            </div>
+            {todayByUser.length===0 ? <div style={plannerEmptyStyle}>No schedule blocks or due tasks for today.</div> : (
+              <div style={{display:"grid",gridTemplateColumns:isMobile?"1fr":"repeat(auto-fit,minmax(320px,1fr))",gap:12}}>
                 {todayByUser.map(row=>(
-                  <div key={row.user.id} style={{background:"#0C1117",border:"1px solid #1F2937",borderRadius:8,padding:10}}>
-                    <div style={{fontSize:14,fontWeight:700,color:"#F9FAFB"}}>{row.user.name}</div>
-                    <div style={{fontSize:11,color:"#6B7280",marginBottom:8}}>{roleLabel(row.user.role || "member")}</div>
-                    <div style={{fontSize:11,color:"#9CA3AF",marginBottom:4}}>Schedule Blocks</div>
-                    {row.blocks.length===0 ? <div style={{fontSize:11,color:"#4B5563",marginBottom:8}}>No blocks</div> : row.blocks.map(block=><div key={block.id} style={{display:"flex",justifyContent:"space-between",gap:8,background:"#111827",border:"1px solid #1F2937",borderRadius:6,padding:"6px 8px",marginBottom:6}}><div style={{fontSize:11,color:"#D1D5DB"}}>{block.start} - {block.end}</div><div style={{fontSize:11,color:block.source==="oneoff"?"#34D399":"#60A5FA"}}>{block.title || "Shift"}</div></div>)}
-                    <div style={{fontSize:11,color:"#9CA3AF",marginBottom:4,marginTop:6}}>Due Tasks</div>
-                    {row.tasks.length===0 ? <div style={{fontSize:11,color:"#4B5563"}}>No tasks due today</div> : row.tasks.map(task=><div key={task.id} style={{background:"#111827",border:"1px solid #1F2937",borderRadius:6,padding:"6px 8px",marginBottom:6}}><div style={{fontSize:12,color:"#F9FAFB",fontWeight:600}}>{task.title}</div><div style={{fontSize:11,color:"#9CA3AF"}}>{task.priority} | {task.status}{task.dueTime ? ` | ${displayTimeValue(task.dueTime)}` : ""}</div></div>)}
+                  <div key={row.user.id} style={plannerPersonCardStyle}>
+                    <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:12,marginBottom:12}}>
+                      <div>
+                        <div style={{fontSize:isMobile ? 18 : 20,fontWeight:800,color:"#F8FBFF"}}>{row.user.name}</div>
+                        <div style={{fontSize:11,color:plannerTheme.muted,marginTop:4,textTransform:"uppercase",letterSpacing:0.6}}>{roleLabel(row.user.role || "member")}</div>
+                      </div>
+                      <div style={plannerPillStyle}>{row.blocks.length + row.tasks.length} items</div>
+                    </div>
+                    <div style={{display:"flex",flexDirection:"column",gap:14}}>
+                      <div>
+                        <div style={{...plannerEyebrowStyle,fontSize:10,marginBottom:8}}>Schedule</div>
+                        {row.blocks.length===0 ? <div style={plannerEmptyStyle}>No schedule blocks</div> : <div style={{display:"flex",flexDirection:"column",gap:10}}>{row.blocks.map(block=>renderScheduleItem(block,{ key:`today-block-${block.id}`, title:block.title || "Shift", subtitle:block.detail || "", accentColor:block.source==="oneoff" ? plannerTheme.success : plannerTheme.accent, badgeLabel:block.source==="oneoff" ? "One-Off" : "Recurring" }))}</div>}
+                      </div>
+                      <div>
+                        <div style={{...plannerEyebrowStyle,fontSize:10,color:"#A7F3D0",marginBottom:8}}>Due Tasks</div>
+                        {row.tasks.length===0 ? <div style={plannerEmptyStyle}>No tasks due today</div> : <div style={{display:"flex",flexDirection:"column",gap:10}}>{row.tasks.map(task=>{ const priorityColor = task.priority==="Urgent" ? plannerTheme.danger : task.priority==="High" ? "#FB923C" : task.priority==="Low" ? "#94A3B8" : plannerTheme.warning; return <div key={task.id} style={plannerItemRowStyle}><div style={{display:"flex",gap:12,alignItems:"flex-start",flex:1,minWidth:0}}><div style={{...plannerTimeBadgeStyle,minWidth:isMobile?84:96}}>{task.dueTime ? displayTimeValue(task.dueTime) : "Any time"}</div><div style={{minWidth:0}}><div style={{fontSize:13,fontWeight:700,color:"#F7FAFC",lineHeight:1.35}}>{task.title}</div>{task.detail ? <div style={{fontSize:12,color:plannerTheme.muted,marginTop:4,lineHeight:1.45}}>{task.detail}</div> : null}</div></div><div style={{display:"flex",flexDirection:"column",alignItems:isMobile?"stretch":"flex-end",gap:8}}><span style={{...plannerPillStyle,color:priorityColor,border:`1px solid ${priorityColor}66`,background:`${priorityColor}12`}}>{task.priority}</span><span style={plannerPillStyle}>{task.status}</span></div></div> })}</div>}
+                      </div>
+                    </div>
                   </div>
                 ))}
               </div>
             )}
           </div>
-          <div style={{...cardStyle,padding:sectionPad}}>
-            <div style={{display:"grid",gridTemplateColumns:isMobile?"1fr":"1fr 200px",gap:sectionGap,marginBottom:8}}>
+          <div style={plannerPanelStyle}>
+            <div style={{marginBottom:14}}>
+              <div style={{...plannerEyebrowStyle,color:plannerTheme.success}}>One-Off Blocks</div>
+              <div style={plannerHeadingStyle}>Temporary Assignments</div>
+            </div>
+            <div style={plannerInputGridStyle("1fr 220px")}>
               <input value={taskDateFilter} onChange={e=>setTaskDateFilter(e.target.value)} type="date" style={iStyle} />
               <select value={oneOffFilterUser} onChange={e=>setOneOffFilterUser(e.target.value)} style={iStyle}><option value="All">All Users</option>{teamUsers.map(u=><option key={u.id} value={u.id}>{u.name}</option>)}</select>
             </div>
-            <div style={{fontSize:12,color:"#9CA3AF",marginBottom:6}}>One-Off Blocks</div>
-            {oneOffFiltered.length===0 ? <div style={{fontSize:11,color:"#4B5563"}}>No matching one-off blocks.</div> : oneOffFiltered.map(entry=><div key={entry.id} style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:8,background:"#0C1117",border:"1px solid #1F2937",borderRadius:6,padding:"7px 8px",marginBottom:6}}><div style={{fontSize:11,color:"#D1D5DB"}}>{formatDateLong(entry.date)} | {entry.userName} | {entry.start} - {entry.end} | {entry.title} ({entry.type})</div>{canManageSchedule && <div style={{display:"flex",gap:6}}>{canEdit && <button onClick={()=>editOneOff(entry)} style={{...btnBlue,padding:"2px 8px",fontSize:11}}>Edit</button>}{canDelete && <button onClick={()=>removeOneOff(entry.id)} style={{...btnGray,padding:"2px 8px",fontSize:11,border:"1px solid #EF4444",color:"#FCA5A5"}}>Delete</button>}</div>}</div>)}
+            <div style={{height:12}} />
+            {oneOffFiltered.length===0 ? <div style={plannerEmptyStyle}>No matching one-off blocks.</div> : <div style={{display:"flex",flexDirection:"column",gap:10}}>{oneOffFiltered.map(entry=>renderScheduleItem(entry,{ key:`oneoff-${entry.id}`, title:`${entry.userName} · ${entry.title}`, subtitle:`${formatDateLong(entry.date)}${entry.detail ? ` · ${entry.detail}` : ""}`, accentColor:entry.type==="override" ? plannerTheme.warning : plannerTheme.success, badgeLabel:entry.type==="override" ? "Override" : "Supplement", onEdit:canManageSchedule && canEdit ? ()=>editOneOff(entry) : null, onDelete:canManageSchedule && canDelete ? ()=>removeOneOff(entry.id) : null }))}</div>}
           </div>
         </>
       )}
 
       {view==="week" && (
-        <div style={{...cardStyle,padding:sectionPad}}>
-          <div style={{fontFamily:"'Barlow Condensed',sans-serif",fontWeight:900,fontSize:16,color:"#60A5FA",letterSpacing:1,marginBottom:8}}>THIS WEEK</div>
-          <div style={{display:"grid",gridTemplateColumns:isMobile?"1fr":"repeat(2,minmax(0,1fr))",gap:sectionGap}}>
-            {weekRows.map(day=><div key={day.day} style={{background:"#0C1117",border:"1px solid #1F2937",borderRadius:8,padding:10}}><div style={{fontSize:13,fontWeight:700,color:"#F9FAFB"}}>{day.day}</div><div style={{fontSize:11,color:"#6B7280",marginBottom:8}}>{day.label}</div>{day.blocks.length===0 ? <div style={{fontSize:11,color:"#4B5563"}}>No schedule blocks</div> : day.blocks.map(block=><div key={`${day.day}-${block.id}`} style={{display:"flex",justifyContent:"space-between",gap:8,background:"#111827",border:"1px solid #1F2937",borderRadius:6,padding:"6px 8px",marginBottom:6}}><div style={{fontSize:11,color:"#D1D5DB"}}>{block.userName}</div><div style={{fontSize:11,color:"#9CA3AF"}}>{block.start} - {block.end}</div><div style={{fontSize:11,color:block.source==="oneoff"?"#34D399":"#60A5FA"}}>{block.title || "Shift"}</div></div>)}</div>)}
+        <div style={plannerPanelStyle}>
+          <div style={{marginBottom:14}}>
+            <div style={plannerEyebrowStyle}>Week View</div>
+            <div style={plannerHeadingStyle}>Weekly Planner</div>
+            <div style={plannerSubheadingStyle}>Grouped by person inside each day so the team can scan assignments fast.</div>
+          </div>
+          <div style={{display:"grid",gridTemplateColumns:isMobile?"1fr":"repeat(2,minmax(0,1fr))",gap:12}}>
+            {weekRows.map(day=><div key={day.day} style={plannerDayCardStyle}><div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:12,marginBottom:12}}><div><div style={{fontSize:18,fontWeight:800,color:"#F8FBFF"}}>{day.day}</div><div style={{fontSize:12,color:plannerTheme.muted,marginTop:3}}>{day.label}</div></div><div style={plannerPillStyle}>{day.people.reduce((sum, person)=>sum + person.items.length, 0)} items</div></div>{day.people.length===0 ? <div style={plannerEmptyStyle}>No schedule blocks</div> : <div style={{display:"flex",flexDirection:"column",gap:10}}>{day.people.map(group=>renderPersonGroup(group, block=>renderScheduleItem(block,{ key:`week-${day.day}-${block.id}`, title:block.title || "Shift", subtitle:block.detail || "", accentColor:block.source==="oneoff" ? plannerTheme.success : plannerTheme.accent, badgeLabel:block.source==="oneoff" ? "One-Off" : "Recurring" }), `week-group-${day.day}-${group.userId}`))}</div>}</div>)}
           </div>
         </div>
       )}
@@ -6682,9 +6865,14 @@ function ScheduleTab({ activeUser, currentUser, teamUsers = [], recurringWeeklyS
       {view==="tasks" && (
         <>
           {canManageTasks && (
-            <div style={{background:"#111827",border:"1px solid #1F2937",borderRadius:8,padding:sectionPad,marginBottom:sectionMargin}}>
-              <div style={{fontFamily:"'Barlow Condensed',sans-serif",fontWeight:900,fontSize:16,color:"#34D399",letterSpacing:1,marginBottom:8}}>TASK ASSIGNMENT</div>
-              <div style={{display:"grid",gridTemplateColumns:isMobile?"1fr":"1.8fr 1.2fr",gap:sectionGap,marginBottom:sectionGap}}>
+            <div style={{...plannerPanelStyle,marginBottom:sectionMargin}}>
+              <div style={{marginBottom:14}}>
+                <div style={{...plannerEyebrowStyle,color:plannerTheme.success}}>Task Input</div>
+                <div style={plannerHeadingStyle}>Task Assignment</div>
+                <div style={plannerSubheadingStyle}>Touch-friendly task creation with due dates, time, and ownership.</div>
+              </div>
+              <div style={{display:"flex",flexDirection:"column",gap:sectionGap}}>
+              <div style={plannerInputGridStyle("1.8fr 1.2fr")}>
                 <input value={taskForm.title} onChange={e=>setTaskForm(f=>({...f,title:e.target.value}))} placeholder="Task title" style={iStyle} />
                 <textarea
                   value={taskForm.detail}
@@ -6694,32 +6882,38 @@ function ScheduleTab({ activeUser, currentUser, teamUsers = [], recurringWeeklyS
                   style={{...iStyle,resize:"vertical",lineHeight:1.45}}
                 />
               </div>
-              <div style={{display:"grid",gridTemplateColumns:isMobile?"1fr":"repeat(5,minmax(0,1fr))",gap:sectionGap,marginBottom:sectionGap}}>
+              <div style={plannerInputGridStyle("repeat(5,minmax(0,1fr))")}>
                 <select value={taskForm.assignedUserId} onChange={e=>setTaskForm(f=>({...f,assignedUserId:e.target.value}))} style={iStyle}><option value="">Assign User</option>{teamUsers.map(u=><option key={u.id} value={u.id}>{u.name}</option>)}</select>
                 <input type="date" value={taskForm.dueDate} onChange={e=>setTaskForm(f=>({...f,dueDate:e.target.value}))} style={iStyle} />
                 <TimePicker value={taskForm.dueTime} onChange={value=>setTaskForm(f=>({...f,dueTime:value}))} allowEmpty storageFormat="24h" />
                 <select value={taskForm.priority} onChange={e=>setTaskForm(f=>({...f,priority:e.target.value}))} style={iStyle}>{["Low","Normal","High","Urgent"].map(p=><option key={p}>{p}</option>)}</select>
                 <select value={taskForm.status} onChange={e=>setTaskForm(f=>({...f,status:e.target.value}))} style={iStyle}>{["To Do","In Progress","Done"].map(s=><option key={s}>{s}</option>)}</select>
               </div>
-              <div style={{display:"grid",gridTemplateColumns:isMobile?"1fr":"1fr 1fr",gap:sectionGap,marginBottom:sectionGap}}>
+              <div style={plannerInputGridStyle("1fr 1fr")}>
                 <select value={taskForm.propertyId} onChange={e=>setTaskForm(f=>({...f,propertyId:e.target.value}))} style={iStyle}><option value="">Link Job (optional)</option>{properties.map(p=><option key={p.id} value={p.id}>{p.address}</option>)}</select>
                 <select value={taskForm.clientId} onChange={e=>setTaskForm(f=>({...f,clientId:e.target.value}))} style={iStyle}><option value="">Link Client (optional)</option>{clients.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}</select>
               </div>
               <div style={{display:"flex",justifyContent:isMobile?"stretch":"flex-end"}}>
-                <button onClick={saveTask} style={{...btnGreen,width:isMobile?"100%":180}}>{taskEditId ? "Save" : "Add"}</button>
+                <button onClick={saveTask} style={{...plannerActionButtonStyle("primary"),width:isMobile?"100%":180,minHeight:46}}>{taskEditId ? "Save" : "Add"}</button>
+              </div>
               </div>
             </div>
           )}
 
-          <div style={{...cardStyle,padding:sectionPad}}>
-            <div style={{display:"grid",gridTemplateColumns:isMobile?"1fr":"repeat(5,minmax(0,1fr))",gap:sectionGap,marginBottom:sectionGap}}>
+          <div style={plannerPanelStyle}>
+            <div style={{marginBottom:14}}>
+              <div style={plannerEyebrowStyle}>Task Board</div>
+              <div style={plannerHeadingStyle}>Assigned Tasks</div>
+            </div>
+            <div style={plannerInputGridStyle("repeat(5,minmax(0,1fr))")}>
               <select value={taskUserFilter} onChange={e=>setTaskUserFilter(e.target.value)} style={iStyle}><option value="All">All Users</option>{teamUsers.map(u=><option key={u.id} value={u.id}>{u.name}</option>)}</select>
               <select value={taskStatusFilter} onChange={e=>setTaskStatusFilter(e.target.value)} style={iStyle}><option value="All">All Statuses</option>{["To Do","In Progress","Done"].map(s=><option key={s}>{s}</option>)}</select>
               <select value={taskPriorityFilter} onChange={e=>setTaskPriorityFilter(e.target.value)} style={iStyle}><option value="All">All Priorities</option>{["Low","Normal","High","Urgent"].map(p=><option key={p}>{p}</option>)}</select>
               <input type="date" value={taskDateFilter} onChange={e=>setTaskDateFilter(e.target.value)} style={iStyle} />
-              <button onClick={()=>{setTaskUserFilter("All");setTaskStatusFilter("All");setTaskPriorityFilter("All");setTaskDateFilter("")}} style={btnGray}>Reset</button>
+              <button onClick={()=>{setTaskUserFilter("All");setTaskStatusFilter("All");setTaskPriorityFilter("All");setTaskDateFilter("")}} style={plannerActionButtonStyle()}>Reset</button>
             </div>
-            {filteredTasks.length===0 ? <div style={{fontSize:12,color:"#6B7280"}}>No tasks match these filters.</div> : <div style={{display:"flex",flexDirection:"column",gap:8}}>{filteredTasks.map(task=>{ const assigned = userMap[task.assignedUserId]; const linkedProp = properties.find(p=>p.id===task.propertyId); const linkedClient = clients.find(c=>c.id===task.clientId); const statusColor = task.status==="Done" ? "#34D399" : task.status==="In Progress" ? "#FBBF24" : "#60A5FA"; const priorityColor = task.priority==="Urgent" ? "#F87171" : task.priority==="High" ? "#FB923C" : task.priority==="Low" ? "#9CA3AF" : "#60A5FA"; return <div key={task.id} style={{background:"#0C1117",border:"1px solid #1F2937",borderRadius:8,padding:10}}><div style={{display:"flex",justifyContent:"space-between",gap:8,alignItems:"flex-start",flexWrap:"wrap"}}><div><div style={{fontSize:14,fontWeight:700,color:"#F9FAFB"}}>{task.title}</div><div style={{fontSize:11,color:"#9CA3AF"}}>{assigned?.name || "Unassigned"} | Due {formatDateLong(task.dueDate)}{task.dueTime ? ` ${displayTimeValue(task.dueTime)}` : ""}</div></div><div style={{display:"flex",gap:6,alignItems:"center",flexWrap:"wrap"}}><span style={{fontSize:11,color:priorityColor,border:`1px solid ${priorityColor}`,borderRadius:12,padding:"1px 8px"}}>{task.priority}</span><select value={task.status} onChange={e=>updateTaskStatus(task.id, e.target.value)} style={{...iStyle,padding:"4px 8px",fontSize:11,width:110}} disabled={!canUpdateTaskStatus(task)}>{["To Do","In Progress","Done"].map(s=><option key={s}>{s}</option>)}</select>{(canManageTasks || canEdit) && <button onClick={()=>editTask(task)} style={{...btnBlue,padding:"4px 8px",fontSize:11}}>Edit</button>}{canDelete && <button onClick={()=>removeTask(task.id)} style={{...btnGray,padding:"4px 8px",fontSize:11,border:"1px solid #EF4444",color:"#FCA5A5"}}>Delete</button>}</div></div>{task.detail && <div style={{fontSize:12,color:"#D1D5DB",marginTop:6}}>{task.detail}</div>}<div style={{display:"flex",gap:10,flexWrap:"wrap",marginTop:6,fontSize:11,color:"#6B7280"}}><span style={{color:statusColor}}>Status: {task.status}</span>{linkedProp && <span>Job: {linkedProp.address}</span>}{linkedClient && <span>Client: {linkedClient.name}</span>}</div></div> })}</div>}
+            <div style={{height:12}} />
+            {filteredTasks.length===0 ? <div style={plannerEmptyStyle}>No tasks match these filters.</div> : <div style={{display:"flex",flexDirection:"column",gap:10}}>{filteredTasks.map(task=>{ const assigned = userMap[task.assignedUserId]; const linkedProp = properties.find(p=>p.id===task.propertyId); const linkedClient = clients.find(c=>c.id===task.clientId); const statusColor = task.status==="Done" ? plannerTheme.success : task.status==="In Progress" ? plannerTheme.warning : plannerTheme.accent; const priorityColor = task.priority==="Urgent" ? plannerTheme.danger : task.priority==="High" ? "#FB923C" : task.priority==="Low" ? "#94A3B8" : plannerTheme.accent; return <div key={task.id} style={plannerPersonCardStyle}><div style={{display:"flex",justifyContent:"space-between",gap:10,alignItems:"flex-start",flexWrap:"wrap"}}><div style={{minWidth:0,flex:1}}><div style={{fontSize:16,fontWeight:800,color:"#F8FBFF"}}>{task.title}</div><div style={{fontSize:12,color:plannerTheme.muted,marginTop:4}}>{assigned?.name || "Unassigned"} · Due {formatDateLong(task.dueDate)}{task.dueTime ? ` ${displayTimeValue(task.dueTime)}` : ""}</div>{task.detail ? <div style={{fontSize:12,color:plannerTheme.text,marginTop:10,lineHeight:1.55}}>{task.detail}</div> : null}<div style={{display:"flex",gap:8,flexWrap:"wrap",marginTop:10}}><span style={{...plannerPillStyle,color:priorityColor,border:`1px solid ${priorityColor}66`,background:`${priorityColor}12`}}>{task.priority}</span><span style={{...plannerPillStyle,color:statusColor,border:`1px solid ${statusColor}66`,background:`${statusColor}12`}}>{task.status}</span>{linkedProp && <span style={plannerPillStyle}>Job · {linkedProp.address}</span>}{linkedClient && <span style={plannerPillStyle}>Client · {linkedClient.name}</span>}</div></div><div style={{display:"flex",gap:8,flexWrap:"wrap",alignItems:"center"}}><select value={task.status} onChange={e=>updateTaskStatus(task.id, e.target.value)} style={{...iStyle,padding:"8px 10px",fontSize:12,width:120}} disabled={!canUpdateTaskStatus(task)}>{["To Do","In Progress","Done"].map(s=><option key={s}>{s}</option>)}</select>{(canManageTasks || canEdit) && <button onClick={()=>editTask(task)} style={plannerActionButtonStyle("primary")}>Edit</button>}{canDelete && <button onClick={()=>removeTask(task.id)} style={plannerActionButtonStyle("danger")}>Delete</button>}</div></div></div> })}</div>}
           </div>
         </>
       )}
@@ -6727,21 +6921,30 @@ function ScheduleTab({ activeUser, currentUser, teamUsers = [], recurringWeeklyS
       {view==="recurring" && (
         <>
           {canManageRecurring && (
-            <div style={{background:"#111827",border:"1px solid #1F2937",borderRadius:8,padding:sectionPad,marginBottom:sectionMargin}}>
-              <div style={{fontFamily:"'Barlow Condensed',sans-serif",fontWeight:900,fontSize:16,color:"#38BDF8",letterSpacing:1,marginBottom:8}}>MANAGE RECURRING WEEKLY SCHEDULE</div>
-              <div style={{display:"grid",gridTemplateColumns:isMobile?"1fr":"1.2fr 1fr 1fr 1fr 2fr auto",gap:sectionGap}}>
+            <div style={{...plannerPanelStyle,marginBottom:sectionMargin}}>
+              <div style={{marginBottom:14}}>
+                <div style={plannerEyebrowStyle}>Recurring Input</div>
+                <div style={plannerHeadingStyle}>Manage Recurring Weekly Schedule</div>
+                <div style={plannerSubheadingStyle}>Each day now groups shifts person-first so names appear once and schedule items stay nested underneath.</div>
+              </div>
+              <div style={plannerInputGridStyle("1.2fr 1fr 1fr 1fr 2fr auto")}>
                 <select value={recurringForm.userId} onChange={e=>setRecurringForm(f=>({...f,userId:e.target.value}))} style={iStyle}><option value="">Select User</option>{teamUsers.map(u=><option key={u.id} value={u.id}>{u.name}</option>)}</select>
                 <select value={recurringForm.day} onChange={e=>setRecurringForm(f=>({...f,day:e.target.value}))} style={iStyle}>{WEEK_DAYS.map(d=><option key={d}>{d}</option>)}</select>
                 <TimePicker value={recurringForm.start} onChange={value=>setRecurringForm(f=>({...f,start:value}))} />
                 <TimePicker value={recurringForm.end} onChange={value=>setRecurringForm(f=>({...f,end:value}))} />
                 <input value={recurringForm.note} onChange={e=>setRecurringForm(f=>({...f,note:e.target.value}))} placeholder="Optional note" style={iStyle} />
-                <button onClick={saveRecurring} style={btnBlue}>{recurringEditId ? "Save" : "Add"}</button>
+                <button onClick={saveRecurring} style={{...plannerActionButtonStyle("primary"),minHeight:isMobile?44:48}}>{recurringEditId ? "Save" : "Add"}</button>
               </div>
             </div>
           )}
 
-          <div style={{...cardStyle,padding:sectionPad}}>
-            {recurringRows.length===0 ? <div style={{fontSize:12,color:"#6B7280"}}>No recurring schedule entries yet.</div> : <div style={{display:"grid",gridTemplateColumns:isMobile?"1fr":"repeat(2,minmax(0,1fr))",gap:sectionGap}}>{WEEK_DAYS.map(day=>{ const entries = recurringRows.filter(r=>r.day===day); return <div key={day} style={{background:"#0C1117",border:"1px solid #1F2937",borderRadius:8,padding:10}}><div style={{fontSize:13,fontWeight:700,color:"#F9FAFB",marginBottom:8}}>{day}</div>{entries.length===0 ? <div style={{fontSize:11,color:"#4B5563"}}>No recurring shifts</div> : entries.map(entry=><div key={entry.id} style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:8,background:"#111827",border:"1px solid #1F2937",borderRadius:6,padding:"6px 8px",marginBottom:6}}><div style={{fontSize:11,color:"#D1D5DB"}}>{entry.userName} | {entry.start} - {entry.end}{entry.note ? ` | ${entry.note}` : ""}</div>{canManageRecurring && <div style={{display:"flex",gap:6}}>{canEdit && <button onClick={()=>editRecurring(entry)} style={{...btnBlue,padding:"2px 8px",fontSize:11}}>Edit</button>}{canDelete && <button onClick={()=>removeRecurring(entry.id)} style={{...btnGray,padding:"2px 8px",fontSize:11,border:"1px solid #EF4444",color:"#FCA5A5"}}>Delete</button>}</div>}</div>)}</div> })}</div>}
+          <div style={plannerPanelStyle}>
+            <div style={{marginBottom:14}}>
+              <div style={plannerEyebrowStyle}>Recurring View</div>
+              <div style={plannerHeadingStyle}>Recurring Schedule by Person</div>
+              <div style={plannerSubheadingStyle}>Daily sections are grouped by person, sorted by time, and built from the existing schedule data in the UI layer.</div>
+            </div>
+            {recurringRows.length===0 ? <div style={plannerEmptyStyle}>No recurring schedule entries yet.</div> : <div style={{display:"grid",gridTemplateColumns:isMobile?"1fr":"repeat(2,minmax(0,1fr))",gap:12}}>{recurringDayGroups.map(day=><div key={day.day} style={plannerDayCardStyle}><div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:12,marginBottom:12}}><div><div style={{fontSize:18,fontWeight:800,color:"#F8FBFF"}}>{day.day}</div><div style={{fontSize:12,color:plannerTheme.muted,marginTop:3}}>{day.people.length} {day.people.length===1 ? "person" : "people"} scheduled</div></div><div style={plannerPillStyle}>{day.people.reduce((sum, person)=>sum + person.items.length, 0)} entries</div></div>{day.people.length===0 ? <div style={plannerEmptyStyle}>No recurring shifts</div> : <div style={{display:"flex",flexDirection:"column",gap:10}}>{day.people.map(group=>renderPersonGroup(group, entry=>renderScheduleItem(entry,{ key:`recurring-${day.day}-${entry.id}`, title:entry.note || "Recurring Shift", subtitle:`${entry.start} - ${entry.end}`, accentColor:plannerTheme.accent, badgeLabel:"Recurring", onEdit:canManageRecurring && canEdit ? ()=>editRecurring(entry) : null, onDelete:canManageRecurring && canDelete ? ()=>removeRecurring(entry.id) : null }), `recurring-group-${day.day}-${group.userId}`))}</div>}</div>)}</div>}
           </div>
         </>
       )}
