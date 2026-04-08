@@ -24,6 +24,7 @@ import {
   deleteProperty as deleteSupabaseProperty
 } from "./services/properties"
 import {
+  getUsers as fetchUsersFromSupabase,
   createUser as createSupabaseUser,
   updateUser as updateSupabaseUser,
   deleteUser as deleteSupabaseUser
@@ -673,6 +674,7 @@ const DOCUMENT_DB_VERSION = 1
 const DOCUMENT_STORE_NAME = "documentPayloads"
 const MAX_DOCUMENT_PERSIST_BYTES = 10 * 1024 * 1024
 const STORAGE_ERROR_COOLDOWN_MS = 4000
+const DEVICE_SESSION_STORAGE_KEY = "hcg-device-session"
 const storageErrorTimestamps = new Map()
 const normalizeDocumentRecord = (doc = {}) => ({
   id: doc.id || uid(),
@@ -1580,7 +1582,6 @@ const buildWorkspaceSnapshotPayload = ({
   users = [],
   teams = [],
   messages = [],
-  currentUser = null,
   notifications = [],
   shownOneTimeNotifications = {},
   lastSavedAt = ""
@@ -1594,11 +1595,43 @@ const buildWorkspaceSnapshotPayload = ({
   users: Array.isArray(users) ? users : [],
   teams: Array.isArray(teams) ? teams : [],
   messages: Array.isArray(messages) ? messages : [],
-  currentUser: currentUser || null,
   notifications: Array.isArray(notifications) ? notifications.slice(0, 100) : [],
   shownOneTimeNotifications: shownOneTimeNotifications || {},
   lastSavedAt: String(lastSavedAt || "").trim()
 })
+const getStoredDeviceSession = () => {
+  if (typeof window === "undefined" || !window.localStorage) return null
+  try {
+    const raw = window.localStorage.getItem(DEVICE_SESSION_STORAGE_KEY)
+    const parsed = safeParseJSON(raw, null)
+    if (!parsed || typeof parsed !== "object") return null
+    const userId = String(parsed.userId || "").trim()
+    const sessionId = String(parsed.sessionId || "").trim()
+    if (!userId || !sessionId) return null
+    return { userId, sessionId }
+  } catch (error) {
+    return null
+  }
+}
+const storeDeviceSession = (session) => {
+  if (typeof window === "undefined" || !window.localStorage) return
+  try {
+    if (!session?.userId || !session?.sessionId) {
+      window.localStorage.removeItem(DEVICE_SESSION_STORAGE_KEY)
+      return
+    }
+    window.localStorage.setItem(DEVICE_SESSION_STORAGE_KEY, JSON.stringify({
+      userId: String(session.userId || "").trim(),
+      sessionId: String(session.sessionId || "").trim()
+    }))
+  } catch (error) {}
+}
+const clearStoredDeviceSession = () => {
+  if (typeof window === "undefined" || !window.localStorage) return
+  try {
+    window.localStorage.removeItem(DEVICE_SESSION_STORAGE_KEY)
+  } catch (error) {}
+}
 const toSupabaseUserPayload = (user, teamId) => ({
   team_id: teamId,
   legacy_user_id: user.id,
@@ -1615,6 +1648,21 @@ const toSupabaseUserPayload = (user, teamId) => ({
     password: String(user.password || ""),
     createdAt: user.createdAt || now()
   }
+})
+const fromSupabaseUserPayload = (user = {}) => ({
+  id: String(user.legacy_user_id || user.id || "").trim() || userId(),
+  name: String(user.name || "").trim(),
+  email: String(user.email || "").trim().toLowerCase(),
+  password: String(user?.metadata?.password || ""),
+  createdAt: user?.metadata?.createdAt || user.created_at || now(),
+  teamId: "team-main",
+  approved: user.approved !== false,
+  activeSessionId: user.active_session_id || null,
+  lastLoginAt: user.last_login_at || null,
+  role: user.role || "member",
+  profilePic: user.profile_pic || "",
+  mustResetPassword: !!user.must_reset_password,
+  passwordResetSource: String(user.password_reset_source || "").trim()
 })
 const toSupabasePropertyPayload = (property, teamId) => {
   const normalized = normalizeProp(property)
@@ -2133,7 +2181,7 @@ export default function JLCMSApp() {
         if (cancelled) return
         workspaceTeamIdRef.current = workspace.id
 
-        const [remoteClients, remoteVendors, remoteInspectors, remoteState] = await Promise.all([
+        const [remoteClients, remoteVendors, remoteInspectors, remoteState, remoteUsersPayload] = await Promise.all([
           fetchClientsFromSupabase().catch((error) => {
             console.error("Supabase clients load failed.", error)
             return []
@@ -2149,6 +2197,10 @@ export default function JLCMSApp() {
           getWorkspaceState(workspace.id).catch((error) => {
             console.error("Supabase workspace state load failed.", error)
             return null
+          }),
+          fetchUsersFromSupabase().catch((error) => {
+            console.error("Supabase users load failed.", error)
+            return []
           })
         ])
 
@@ -2156,7 +2208,7 @@ export default function JLCMSApp() {
         const initialClients = (remoteClients || []).map(fromSupabaseClientPayload)
         const initialVendors = (remoteVendors || []).map(fromSupabaseVendorPayload)
         const initialInspectors = (remoteInspectors || []).map(fromSupabaseInspectorPayload)
-        const remoteUsers = Array.isArray(snapshot?.users) ? snapshot.users : []
+        const remoteUsers = (remoteUsersPayload || []).map(fromSupabaseUserPayload)
         const remoteTeams = Array.isArray(snapshot?.teams) && snapshot.teams.length
           ? snapshot.teams
           : [{
@@ -2193,12 +2245,17 @@ export default function JLCMSApp() {
         setTeams(normalizedTeams)
         setNeedsInitialSetup(normalizedUsers.length===0)
         setMessages(sanitizeMessages(Array.isArray(snapshot?.messages) ? snapshot.messages : [], normalizedUsers))
-        setCurrentUser(snapshot?.currentUser || null)
         setShownOneTimeNotifications(snapshot?.shownOneTimeNotifications || {})
         setLastSavedAt(String(snapshot?.lastSavedAt || remoteState?.updated_at || "").trim())
         setClients(initialClients)
         setVendors(initialVendors)
         setInspectors(initialInspectors)
+        const storedSession = getStoredDeviceSession()
+        const restoredUser = storedSession
+          ? normalizedUsers.find(user => user.id===storedSession.userId && String(user.activeSessionId || "")===storedSession.sessionId)
+          : null
+        if (!restoredUser && storedSession) clearStoredDeviceSession()
+        setCurrentUser(restoredUser || null)
 
         propsLoadedRef.current = true
         workspaceLoadedRef.current = true
@@ -2230,7 +2287,6 @@ export default function JLCMSApp() {
       users,
       teams,
       messages: sanitizeMessages(messages, users),
-      currentUser,
       notifications,
       shownOneTimeNotifications,
       lastSavedAt: savedAt
@@ -2252,7 +2308,6 @@ export default function JLCMSApp() {
     users,
     teams,
     messages,
-    currentUser,
     notifications,
     shownOneTimeNotifications
   ])
@@ -2272,6 +2327,37 @@ export default function JLCMSApp() {
     })
     syncedPropertyIdsRef.current = currentIds
   }, [authLoaded, props, persistPropertyRecord])
+  useEffect(() => {
+    if (!authLoaded || !workspaceLoadedRef.current || !workspaceTeamIdRef.current) return
+    let cancelled = false
+    const syncRemoteWorkspace = async () => {
+      try {
+        const [remoteState, remoteUsersPayload] = await Promise.all([
+          getWorkspaceState(workspaceTeamIdRef.current),
+          fetchUsersFromSupabase()
+        ])
+        if (cancelled) return
+        const remoteUsers = (remoteUsersPayload || []).map(fromSupabaseUserPayload)
+        if (remoteUsers.length) {
+          const normalizedRemoteUsers = buildSingleCompanyAuthState(remoteUsers, teams).normalizedUsers
+          setUsers(prev => JSON.stringify(prev)===JSON.stringify(normalizedRemoteUsers) ? prev : normalizedRemoteUsers)
+          const remoteMessages = sanitizeMessages(Array.isArray(remoteState?.data?.messages) ? remoteState.data.messages : [], normalizedRemoteUsers)
+          setMessages(prev => JSON.stringify(prev)===JSON.stringify(remoteMessages) ? prev : remoteMessages)
+          return
+        }
+        const remoteMessages = sanitizeMessages(Array.isArray(remoteState?.data?.messages) ? remoteState.data.messages : [], users)
+        setMessages(prev => JSON.stringify(prev)===JSON.stringify(remoteMessages) ? prev : remoteMessages)
+      } catch (error) {
+        console.error("Supabase workspace realtime sync failed.", error)
+      }
+    }
+    syncRemoteWorkspace()
+    const intervalId = window.setInterval(syncRemoteWorkspace, 3000)
+    return () => {
+      cancelled = true
+      window.clearInterval(intervalId)
+    }
+  }, [authLoaded, teams, users])
   useEffect(() => {
     if (!authLoaded || !workspaceLoadedRef.current) return
     const mainTeam = (teams || []).find(team => team.teamId === FIXED_TEAM_ID)
@@ -2590,6 +2676,7 @@ export default function JLCMSApp() {
     const nextUser = { ...found, activeSessionId:sessionId, lastLoginAt:loginAt }
     setUsers(prev=>prev.map(u=>u.id!==found.id?u:nextUser))
     setCurrentUser(nextUser)
+    storeDeviceSession({ userId: nextUser.id, sessionId })
     persistUserRecord(nextUser).catch(error => {
       console.error("Supabase user login sync failed.", error)
     })
@@ -2632,6 +2719,7 @@ export default function JLCMSApp() {
     setTeams([nextTeam])
     setCurrentUser(nextUser)
     setNeedsInitialSetup(false)
+    storeDeviceSession({ userId: nextUser.id, sessionId })
     persistUserRecord(nextUser).catch(error => {
       console.error("Supabase admin user create failed.", error)
     })
@@ -2680,6 +2768,7 @@ export default function JLCMSApp() {
       ]
     }))
     setCurrentUser(nextUser)
+    storeDeviceSession({ userId: nextUser.id, sessionId })
     persistUserRecord(nextUser).catch(error => {
       console.error("Supabase signup user create failed.", error)
     })
@@ -2695,6 +2784,7 @@ export default function JLCMSApp() {
       })
     }
     setCurrentUser(null)
+    clearStoredDeviceSession()
   }
 
   const approveTeamRequest = (teamIdValue, userIdValue) => {
@@ -2718,7 +2808,10 @@ export default function JLCMSApp() {
     setUsers(prev=>prev.filter(u=>u.id!==userIdValue))
     setTeams(prev=>prev.map(t=>t.teamId!==teamIdValue?t:{...t,pendingRequests:(t.pendingRequests||[]).filter(r=>r.userId!==userIdValue)}))
     setMessages(prev=>prev.filter(m=>m.senderId!==userIdValue && m.toUserId!==userIdValue))
-    if (currentUser?.id===userIdValue) setCurrentUser(null)
+    if (currentUser?.id===userIdValue) {
+      setCurrentUser(null)
+      clearStoredDeviceSession()
+    }
     deleteSupabaseUser(userIdValue).catch(error => {
       console.error("Supabase denied user cleanup failed.", error)
     })
@@ -2737,7 +2830,10 @@ export default function JLCMSApp() {
     const targetUser = users.find(u=>u.id===userIdValue)
     const nextUser = targetUser ? { ...targetUser, activeSessionId:null } : null
     setUsers(prev=>prev.map(u=>u.id!==userIdValue?u:{...u,activeSessionId:null}))
-    if (currentUser?.id===userIdValue) setCurrentUser(null)
+    if (currentUser?.id===userIdValue) {
+      setCurrentUser(null)
+      clearStoredDeviceSession()
+    }
     if (nextUser) {
       persistUserRecord(nextUser).catch(error => {
         console.error("Supabase force logout sync failed.", error)
@@ -2754,7 +2850,10 @@ export default function JLCMSApp() {
       pendingRequests:(t.pendingRequests||[]).filter(r=>r.userId!==userIdValue)
     }))
     setMessages(prev=>prev.filter(m=>m.senderId!==userIdValue && m.toUserId!==userIdValue))
-    if (currentUser?.id===userIdValue) setCurrentUser(null)
+    if (currentUser?.id===userIdValue) {
+      setCurrentUser(null)
+      clearStoredDeviceSession()
+    }
     deleteSupabaseUser(userIdValue).catch(error => {
       console.error("Supabase user removal failed.", error)
     })
@@ -3300,8 +3399,7 @@ export default function JLCMSApp() {
         notifications,
         users,
         teams,
-        messages: sanitizeMessages(messages, users),
-        currentUser
+        messages: sanitizeMessages(messages, users)
       }
     }
     const blob = new Blob([JSON.stringify(payload, null, 2)], { type:"application/json" })
@@ -3313,7 +3411,7 @@ export default function JLCMSApp() {
     link.click()
     document.body.removeChild(link)
     URL.revokeObjectURL(href)
-  }, [props, mileage, clients, invoices, tasks, oneOffScheduleBlocks, recurringWeeklySchedule, vendors, inspectors, notifications, users, teams, messages, currentUser])
+  }, [props, mileage, clients, invoices, tasks, oneOffScheduleBlocks, recurringWeeklySchedule, vendors, inspectors, notifications, users, teams, messages])
 
   const importAllData = useCallback(async (file) => {
     if (!file) return { ok:false, error:"No file selected." }
@@ -3343,7 +3441,8 @@ export default function JLCMSApp() {
       setTeams(normalizedTeams)
       setNeedsInitialSetup(normalizedUsers.length===0)
       setMessages(nextMessages)
-      setCurrentUser(incoming.currentUser || null)
+      setCurrentUser(null)
+      clearStoredDeviceSession()
 
       const importedClients = Array.isArray(incoming.clients) ? incoming.clients.map(normalizeClientRecord) : []
       const importedVendors = Array.isArray(incoming.vendors) ? incoming.vendors.map(normalizeVendorRecord) : []
@@ -3410,10 +3509,12 @@ export default function JLCMSApp() {
     const fresh = users.find(u=>u.id===currentUser.id)
     if (!fresh) {
       setCurrentUser(null)
+      clearStoredDeviceSession()
       return
     }
     if ((fresh.activeSessionId || null) !== (currentUser.activeSessionId || null)) {
       setCurrentUser(null)
+      clearStoredDeviceSession()
       return
     }
     if (
@@ -3428,6 +3529,11 @@ export default function JLCMSApp() {
       setCurrentUser(fresh)
     }
   }, [users, currentUser])
+
+  useEffect(() => {
+    if (!currentUser?.id || !currentUser?.activeSessionId) return
+    storeDeviceSession({ userId: currentUser.id, sessionId: currentUser.activeSessionId })
+  }, [currentUser?.id, currentUser?.activeSessionId])
 
   useEffect(() => {
     if (currentUser?.id) setActiveUser(currentUser.id)
@@ -3490,11 +3596,7 @@ export default function JLCMSApp() {
   }, [notifPanel])
 
   if (!authLoaded) {
-    return (
-      <div style={{minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center",background:"#0C1117",color:"#9CA3AF",fontFamily:"'Barlow',sans-serif"}}>
-        Loading...
-      </div>
-    )
+    return <SplashScreen />
   }
 
   if (needsInitialSetup) {
@@ -5550,6 +5652,75 @@ function AuthScreen({ onLogin, onSignup }) {
             </div>
           )}
         </div>
+      </div>
+    </div>
+  )
+}
+
+function SplashScreen() {
+  return (
+    <div style={{
+      minHeight:"100vh",
+      display:"flex",
+      alignItems:"center",
+      justifyContent:"center",
+      background:"radial-gradient(circle at top, #172554 0%, #0C1117 45%, #030712 100%)",
+      color:"#E5EEF9",
+      fontFamily:"'Barlow',sans-serif",
+      overflow:"hidden",
+      position:"relative"
+    }}>
+      <style>{`
+        @keyframes splashFloat {
+          0%, 100% { transform: translateY(0px); opacity: 0.55; }
+          50% { transform: translateY(-10px); opacity: 1; }
+        }
+        @keyframes splashPulse {
+          0%, 100% { transform: scaleX(0.65); opacity: 0.45; }
+          50% { transform: scaleX(1); opacity: 1; }
+        }
+        @keyframes splashGlow {
+          0%, 100% { opacity: 0.25; transform: scale(0.98); }
+          50% { opacity: 0.5; transform: scale(1.02); }
+        }
+      `}</style>
+      <div style={{
+        position:"absolute",
+        inset:"12% 10%",
+        background:"radial-gradient(circle, rgba(59,130,246,0.18) 0%, rgba(12,17,23,0) 65%)",
+        animation:"splashGlow 4s ease-in-out infinite"
+      }} />
+      <div style={{display:"flex",flexDirection:"column",alignItems:"center",gap:18,position:"relative",zIndex:1,padding:24}}>
+        <div style={{display:"flex",gap:10}}>
+          {[0,1,2].map(index=>(
+            <div
+              key={index}
+              style={{
+                width:14,
+                height:14,
+                borderRadius:"50%",
+                background:index===1 ? "#F97316" : "#60A5FA",
+                boxShadow:index===1 ? "0 0 20px rgba(249,115,22,0.35)" : "0 0 16px rgba(96,165,250,0.24)",
+                animation:`splashFloat 1.6s ease-in-out ${index * 0.18}s infinite`
+              }}
+            />
+          ))}
+        </div>
+        <div style={{textAlign:"center"}}>
+          <div style={{fontFamily:"'Barlow Condensed',sans-serif",fontWeight:900,fontSize:42,letterSpacing:5,color:"#F8FAFC"}}>HCG OPS</div>
+          <div style={{fontSize:13,color:"#93C5FD",letterSpacing:3,textTransform:"uppercase"}}>Loading Workspace</div>
+        </div>
+        <div style={{width:220,height:4,background:"rgba(148,163,184,0.18)",borderRadius:999,overflow:"hidden"}}>
+          <div style={{
+            width:"100%",
+            height:"100%",
+            borderRadius:999,
+            background:"linear-gradient(90deg, #60A5FA 0%, #F97316 50%, #34D399 100%)",
+            animation:"splashPulse 1.8s ease-in-out infinite",
+            transformOrigin:"center"
+          }} />
+        </div>
+        <div style={{fontSize:12,color:"#94A3B8"}}>Syncing team data and preparing your session</div>
       </div>
     </div>
   )
