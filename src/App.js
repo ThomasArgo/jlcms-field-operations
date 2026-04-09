@@ -117,23 +117,25 @@ const STATUS_META = {
 /* ========================== GLOBAL UI SYSTEM ========================== */
 
 const UI = {
-  bg: "#0B1118",
-  appBg: "radial-gradient(circle at 16% 10%, #19273A 0%, #0B1118 47%)",
-  panel: "#111A27",
-  card: "#121C2A",
-  border: "#243246",
+  bg: "#091018",
+  appBg: "radial-gradient(circle at 12% 12%, rgba(38,88,143,0.26) 0%, rgba(11,17,24,0) 34%), radial-gradient(circle at 88% 0%, rgba(249,115,22,0.16) 0%, rgba(9,16,24,0) 28%), linear-gradient(180deg, #0A1119 0%, #0D1622 100%)",
+  panel: "#101927",
+  card: "#131E2C",
+  border: "#263548",
+  borderSoft: "rgba(148,163,184,0.16)",
   text: "#F5F8FF",
-  subtext: "#90A0B8",
+  subtext: "#93A4B9",
   accent: "#F97316",
+  accentCool: "#38BDF8",
   success: "#34D399"
 }
 
 const cardStyle = {
-  background: UI.card,
-  border: `1px solid ${UI.border}`,
-  borderRadius: 12,
-  padding: 16,
-  boxShadow: "0 10px 28px rgba(2,8,20,0.32)"
+  background: "linear-gradient(180deg, rgba(19,30,44,0.98) 0%, rgba(16,25,39,0.98) 100%)",
+  border: `1px solid ${UI.borderSoft}`,
+  borderRadius: 18,
+  padding: 18,
+  boxShadow: "0 18px 40px rgba(2,8,20,0.34)"
 }
 
 const sectionLabel = {
@@ -146,21 +148,24 @@ const sectionLabel = {
 }
 
 const titleStyle = {
-  fontSize: 26,
-  fontWeight: 800,
-  color: UI.text
+  fontFamily: "'Barlow Condensed',sans-serif",
+  fontSize: 32,
+  fontWeight: 900,
+  color: UI.text,
+  letterSpacing: 0.6,
+  lineHeight: 1
 }
 
 const buttonStyle = {
-  background: "#182433",
-  border: "1px solid #34475f",
-  borderRadius: 9,
-  padding: "9px 13px",
-  fontSize: 14,
-  color: UI.text,
+  background: "linear-gradient(180deg,#1A2A3D,#142131)",
+  border: "1px solid rgba(148,163,184,0.22)",
+  borderRadius: 12,
+  padding: "10px 14px",
+  fontSize: 13,
+  color: "#E8EEF8",
   fontWeight: 700,
   cursor: "pointer",
-  boxShadow: "0 4px 14px rgba(5,10,20,0.2)"
+  boxShadow: "0 10px 22px rgba(5,10,20,0.22)"
 }
 
 const LEGEND_ITEMS = [
@@ -1798,10 +1803,11 @@ const viewportInfo = () => {
 const pageShell = (desktopMax = 1120) => {
   const { isPhone, isTablet } = viewportInfo()
   return {
-    padding: isPhone ? 12 : isTablet ? 18 : 24,
+    padding: isPhone ? 14 : isTablet ? 20 : 28,
     width: "100%",
     maxWidth: isPhone ? "100%" : (isTablet ? Math.min(desktopMax, 980) : desktopMax),
-    margin: "0 auto"
+    margin: "0 auto",
+    paddingBottom: isPhone ? 96 : 110
   }
 }
 const getDailyTodayFocus = (dateValue = getTodayDateInput()) => {
@@ -3898,18 +3904,7 @@ export default function JLCMSApp() {
             setNotifPanel(v=>!v)
             markNotificationsReadForUser(activeUser, activeNotifications.map(notification => notification.id))
           }}
-          style={{
-            background:"#1A2332",
-            border:"1px solid #4B5563",
-            color:"#F9FAFB",
-            borderRadius:8,
-            padding:"7px 12px",
-            fontSize:12,
-            fontWeight:700,
-            letterSpacing:0.6,
-            cursor:"pointer",
-            position:"relative"
-          }}
+          style={utilityButtonStyle}
         >
           Alerts
           {unreadCount>0&&(
@@ -3938,17 +3933,7 @@ export default function JLCMSApp() {
             setShowLegend(false)
             setShowQuickRef(v=>!v)
           }}
-          style={{
-          background:"#1A2332",
-          border:"1px solid #4B5563",
-          color:"#F9FAFB",
-          borderRadius:8,
-          padding:"7px 12px",
-          fontSize:12,
-          fontWeight:700,
-          letterSpacing:0.6,
-          cursor:"pointer"
-        }}
+          style={utilityButtonStyle}
         >
           Portals
         </button>
@@ -3960,17 +3945,7 @@ export default function JLCMSApp() {
             setShowQuickRef(false)
             setShowLegend(v=>!v)
           }}
-          style={{
-          background:"#1A2332",
-          border:"1px solid #4B5563",
-          color:"#F9FAFB",
-          borderRadius:8,
-          padding:"7px 12px",
-          fontSize:12,
-          fontWeight:700,
-          letterSpacing:0.6,
-          cursor:"pointer"
-        }}
+          style={utilityButtonStyle}
         >
           KEY
         </button>
@@ -3987,7 +3962,7 @@ export default function JLCMSApp() {
         }).map(t=>{
           const nt = NOTIF_TYPES[t.type] || NOTIF_TYPES.schedule
           return(
-            <div key={t.id} className="notif-in" style={{background:"#111827",border:`1px solid ${nt.color}`,borderLeft:`4px solid ${nt.color}`,borderRadius:8,padding:"10px 14px",boxShadow:"0 8px 24px rgba(0,0,0,0.5)"}}>
+            <div key={t.id} className="notif-in" style={{background:"linear-gradient(180deg,#111B28 0%,#0E1722 100%)",border:`1px solid ${nt.color}55`,borderLeft:`4px solid ${nt.color}`,borderRadius:14,padding:"12px 14px",boxShadow:"0 16px 32px rgba(0,0,0,0.42)"}}>
               <div style={{display:"flex",gap:8,alignItems:"center",marginBottom:4}}>
                 <span style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:10,color:nt.color,padding:"1px 6px",border:`1px solid ${nt.color}`,borderRadius:6}}>{nt.icon}</span>
                 <span style={{fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700,fontSize:13,color:nt.color,letterSpacing:1}}>{cleanUiText(t.title)}</span>
@@ -4030,9 +4005,9 @@ export default function JLCMSApp() {
               maxWidth:"100%",
               height:isMobile ? "auto" : "calc(100vh - 52px)",
               maxHeight:isMobile ? "80vh" : "100%",
-              background:"#111827",
+              background:"linear-gradient(180deg,#111B28 0%,#0C1520 100%)",
               borderLeft:"2px solid #60A5FA",
-              borderRadius:isMobile ? 10 : 0,
+              borderRadius:isMobile ? 16 : 0,
               boxShadow:"0 24px 52px rgba(0,0,0,0.48)",
               zIndex:200,
               display:"flex",
@@ -4040,7 +4015,7 @@ export default function JLCMSApp() {
               overflow:"hidden"
             }}
           >
-            <div style={{padding:"16px 20px",borderBottom:"1px solid #253449",background:"linear-gradient(90deg,#0F1B2D 0%,#111A27 100%)",flexShrink:0}}>
+            <div style={{padding:"18px 20px",borderBottom:"1px solid rgba(148,163,184,0.12)",background:"linear-gradient(90deg,#122235 0%,#111B28 100%)",flexShrink:0}}>
               <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:12}}>
                 <div>
                   <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
@@ -4357,7 +4332,7 @@ export default function JLCMSApp() {
 
 
             {/* toolbar */}
-            <div style={{padding:"12px 16px",background:"#111827",borderBottom:"1px solid #1F2937",position:"sticky",top:0,zIndex:50,display:"flex",flexDirection:"column",gap:10}}>
+            <div style={{padding:"14px 16px",background:"linear-gradient(180deg,#111B28 0%,#0F1722 100%)",borderBottom:"1px solid rgba(148,163,184,0.12)",position:"sticky",top:0,zIndex:50,display:"flex",flexDirection:"column",gap:10,boxShadow:"0 14px 28px rgba(2,6,23,0.16)"}}>
               <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}}>
                 <span style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:11,color:"#6B7280"}}>{dashboardProps.length} OF {props.length} PROPERTIES</span>
                 <div style={{flex:1}}/>
@@ -4600,7 +4575,7 @@ export default function JLCMSApp() {
 
 
             {readyDashboardProps.length>0&&(
-              <div style={{background:"#111827",borderTop:"2px solid #34D399",padding:"10px 16px",display:"flex",alignItems:"center",gap:12,flexWrap:"wrap"}}>
+              <div style={{background:"linear-gradient(180deg,#101A27 0%,#0C1520 100%)",borderTop:"2px solid #34D399",padding:"12px 16px",display:"flex",alignItems:"center",gap:12,flexWrap:"wrap"}}>
                 <span style={{fontFamily:"'Barlow Condensed',sans-serif",fontWeight:900,fontSize:16,color:"#34D399",letterSpacing:2}}>READY TO MOBILIZE</span>
                 {readyDashboardProps.map(p=><span key={p.id} style={{background:"#022C16",border:"1px solid #34D399",borderRadius:4,padding:"3px 10px",fontSize:12,color:"#6EE7B7"}}>{p.address}</span>)}
               </div>
@@ -4627,7 +4602,7 @@ export default function JLCMSApp() {
                   top:52,
                   right:0,
                   height:"calc(100vh - 128px)",
-                  background:"#111827",
+                  background:"linear-gradient(180deg,#111B28 0%,#0C1520 100%)",
                   borderLeft:"2px solid #1F2937",
                   overflowY:"auto",
                   zIndex:340,
@@ -4681,91 +4656,46 @@ export default function JLCMSApp() {
         bottom:0,
         left:0,
         width:"100%",
-        background:"rgba(17,26,39,0.94)",
-        borderTop:"1px solid #2B3A4E",
-        backdropFilter:"blur(8px)",
+        background:"rgba(11,18,28,0.9)",
+        borderTop:"1px solid rgba(148,163,184,0.14)",
+        backdropFilter:"blur(14px)",
         display:"flex",
         justifyContent:"space-around",
         gap:8,
-        padding:"10px 10px max(10px, env(safe-area-inset-bottom))",
+        padding:"12px 10px max(12px, env(safe-area-inset-bottom))",
         zIndex:300
       }}>
         <button
         onClick={()=>setTab("home")}
-        style={{
-          ...buttonStyle,
-          background:tab==="home" ? "#0B1220" : "#111827",
-          border:tab==="home" ? "1px solid #334155" : "1px solid #1F2937",
-          color:tab==="home" ? "#F97316" : "#9CA3AF",
-          fontSize:12,
-          fontWeight:600,
-          padding:"8px 12px",
-          borderRadius:10
-        }}
+        style={appNavButtonStyle(tab==="home")}
       >
         Home
       </button>
 
       <button
         onClick={()=>setTab("dashboard")}
-        style={{
-          ...buttonStyle,
-          background:tab==="dashboard" ? "#0B1220" : "#111827",
-          border:tab==="dashboard" ? "1px solid #334155" : "1px solid #1F2937",
-          color:tab==="dashboard" ? "#F97316" : "#9CA3AF",
-          fontSize:12,
-          fontWeight:600,
-          padding:"8px 12px",
-          borderRadius:10
-        }}
+        style={appNavButtonStyle(tab==="dashboard")}
       >
         Dashboard
       </button>
 
       <button
         onClick={()=>setTab("chat")}
-        style={{
-          ...buttonStyle,
-          background:tab==="chat" ? "#0B1220" : "#111827",
-          border:tab==="chat" ? "1px solid #334155" : "1px solid #1F2937",
-          color:tab==="chat" ? "#F97316" : "#9CA3AF",
-          fontSize:12,
-          fontWeight:600,
-          padding:"8px 12px",
-          borderRadius:10
-        }}
+        style={appNavButtonStyle(tab==="chat")}
       >
         Chat
       </button>
 
       <button
         onClick={()=>setTab("clients")}
-        style={{
-          ...buttonStyle,
-          background:tab==="clients" ? "#0B1220" : "#111827",
-          border:tab==="clients" ? "1px solid #334155" : "1px solid #1F2937",
-          color:tab==="clients" ? "#F97316" : "#9CA3AF",
-          fontSize:12,
-          fontWeight:600,
-          padding:"8px 12px",
-          borderRadius:10
-        }}
+        style={appNavButtonStyle(tab==="clients")}
       >
         Clients
       </button>
 
       <button
         onClick={()=>setTab("more")}
-        style={{
-          ...buttonStyle,
-          background:tab==="more" ? "#0B1220" : "#111827",
-          border:tab==="more" ? "1px solid #334155" : "1px solid #1F2937",
-          color:tab==="more" ? "#F97316" : "#9CA3AF",
-          fontSize:12,
-          fontWeight:600,
-          padding:"8px 12px",
-          borderRadius:10
-        }}
+        style={appNavButtonStyle(tab==="more")}
       >
         More
       </button>
@@ -9364,21 +9294,22 @@ function Section({label,children}){ return(<div style={{marginBottom:22}}><div s
 function Label({children,style}){ return <div style={{fontSize:11,color:"#90A0B8",marginBottom:5,fontFamily:"'Barlow Condensed',sans-serif",letterSpacing:1.1,...style}}>{children}</div> }
 const emptyStateCardStyle = {
   ...cardStyle,
-  background:"#0F1722",
-  border:"1px dashed #334155",
-  color:"#94A3B8",
+  background:"linear-gradient(180deg,#0E1722 0%,#0A131D 100%)",
+  border:"1px dashed rgba(148,163,184,0.28)",
+  color:"#9EB0C5",
   textAlign:"center",
-  padding:24
+  padding:28
 }
 const mutedPanelStyle = {
-  background:"#0C1117",
-  border:"1px solid #1F2937",
-  borderRadius:10,
-  padding:"10px 12px"
+  background:"linear-gradient(180deg,#0F1722 0%,#0C131D 100%)",
+  border:"1px solid rgba(148,163,184,0.16)",
+  borderRadius:14,
+  padding:"12px 14px",
+  boxShadow:"inset 0 1px 0 rgba(255,255,255,0.02)"
 }
 const softInfoPanelStyle = {
   ...mutedPanelStyle,
-  color:"#9CA3AF",
+  color:"#9FB0C5",
   lineHeight:1.5
 }
 const getModalShellStyle = (isMobile, width = 430) => ({
@@ -9389,51 +9320,71 @@ const getModalShellStyle = (isMobile, width = 430) => ({
   width:isMobile ? "calc(100% - 24px)" : width,
   maxWidth:"100%",
   maxHeight:"calc(100vh - 40px)",
-  background:"#111A27",
-  border:"1px solid #253449",
-  borderRadius:14,
-  boxShadow:"0 24px 52px rgba(0,0,0,0.48)",
+  background:"linear-gradient(180deg,#111B28 0%,#0C1520 100%)",
+  border:"1px solid rgba(148,163,184,0.18)",
+  borderRadius:18,
+  boxShadow:"0 30px 70px rgba(0,0,0,0.52)",
   zIndex:400,
   overflow:"hidden",
   display:"flex",
   flexDirection:"column"
 })
 const modalHeaderStyle = {
-  padding:"16px 18px",
-  borderBottom:"1px solid #253449",
-  background:"linear-gradient(90deg,#0F1B2D 0%,#111A27 100%)"
+  padding:"18px 20px",
+  borderBottom:"1px solid rgba(148,163,184,0.14)",
+  background:"linear-gradient(90deg,#122235 0%,#111B28 100%)"
 }
 const modalTitleStyle = {
   fontFamily:"'Barlow Condensed',sans-serif",
-  fontSize:24,
+  fontSize:26,
   fontWeight:900,
   color:"#F9FAFB",
-  letterSpacing:0.8
+  letterSpacing:1
 }
 const modalSubtitleStyle = {
   fontSize:12,
-  color:"#90A0B8",
-  marginTop:4,
+  color:"#9EB0C5",
+  marginTop:6,
   lineHeight:1.5
 }
 const iStyle = {
-  background:"#0D1521",
-  border:"1px solid #2A3A50",
-  borderRadius:9,
+  background:"linear-gradient(180deg,#0F1824 0%,#0C131D 100%)",
+  border:"1px solid rgba(148,163,184,0.18)",
+  borderRadius:12,
   color:"#F5F8FF",
   fontSize:13,
-  padding:"9px 12px",
+  padding:"10px 13px",
 
   width:"100%",
   maxWidth:"100%",
 
   fontFamily:"'Barlow',sans-serif",
-  boxShadow:"inset 0 1px 0 rgba(255,255,255,0.02)"
+  boxShadow:"inset 0 1px 0 rgba(255,255,255,0.03), 0 8px 18px rgba(2,6,23,0.12)"
 }
-const btnOrange={background:"linear-gradient(180deg,#F97316,#EA580C)",color:"#FFF7ED",border:"1px solid #FB923C",padding:"8px 12px",borderRadius:9,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:800,fontSize:13,letterSpacing:1,cursor:"pointer",boxShadow:"0 8px 18px rgba(249,115,22,0.24)"}
-const btnGray={background:"#182433",color:"#E2E8F0",border:"1px solid #334155",padding:"8px 12px",borderRadius:9,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700,fontSize:13,letterSpacing:1,cursor:"pointer"}
-const btnPurple={background:"linear-gradient(180deg,#7C3AED,#6D28D9)",color:"#F5F3FF",border:"1px solid #8B5CF6",padding:"8px 12px",borderRadius:9,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:800,fontSize:13,letterSpacing:1,cursor:"pointer",boxShadow:"0 8px 18px rgba(124,58,237,0.24)"}
-const btnGreen={background:"linear-gradient(180deg,#16A34A,#15803D)",color:"#ECFDF5",border:"1px solid #22C55E",padding:"8px 12px",borderRadius:9,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:800,fontSize:13,letterSpacing:1,cursor:"pointer",boxShadow:"0 8px 18px rgba(22,163,74,0.24)"}
-const btnBlue={background:"linear-gradient(180deg,#2563EB,#1D4ED8)",color:"#EFF6FF",border:"1px solid #60A5FA",padding:"8px 12px",borderRadius:9,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:800,fontSize:13,letterSpacing:1,cursor:"pointer",boxShadow:"0 8px 18px rgba(37,99,235,0.24)"}
-const btnDanger={...btnGray,border:"1px solid #7F1D1D",color:"#FCA5A5",background:"#1F1114"}
+const btnOrange={background:"linear-gradient(180deg,#FB923C,#EA580C)",color:"#FFF7ED",border:"1px solid #FDBA74",padding:"9px 13px",borderRadius:12,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:800,fontSize:13,letterSpacing:0.9,cursor:"pointer",boxShadow:"0 12px 24px rgba(249,115,22,0.24)"}
+const btnGray={background:"linear-gradient(180deg,#1A2A3D,#142131)",color:"#E2E8F0",border:"1px solid rgba(148,163,184,0.22)",padding:"9px 13px",borderRadius:12,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700,fontSize:13,letterSpacing:0.9,cursor:"pointer",boxShadow:"0 10px 22px rgba(5,10,20,0.18)"}
+const btnPurple={background:"linear-gradient(180deg,#8B5CF6,#6D28D9)",color:"#F5F3FF",border:"1px solid #A78BFA",padding:"9px 13px",borderRadius:12,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:800,fontSize:13,letterSpacing:0.9,cursor:"pointer",boxShadow:"0 12px 24px rgba(124,58,237,0.24)"}
+const btnGreen={background:"linear-gradient(180deg,#22C55E,#15803D)",color:"#ECFDF5",border:"1px solid #4ADE80",padding:"9px 13px",borderRadius:12,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:800,fontSize:13,letterSpacing:0.9,cursor:"pointer",boxShadow:"0 12px 24px rgba(22,163,74,0.22)"}
+const btnBlue={background:"linear-gradient(180deg,#38BDF8,#2563EB)",color:"#EFF6FF",border:"1px solid #7DD3FC",padding:"9px 13px",borderRadius:12,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:800,fontSize:13,letterSpacing:0.9,cursor:"pointer",boxShadow:"0 12px 24px rgba(37,99,235,0.24)"}
+const btnDanger={...btnGray,border:"1px solid rgba(248,113,113,0.42)",color:"#FECACA",background:"linear-gradient(180deg,#2A161B,#1B1114)"}
+const utilityButtonStyle = {
+  ...btnGray,
+  padding:"8px 12px",
+  fontSize:12,
+  letterSpacing:0.6,
+  position:"relative"
+}
+const appNavButtonStyle = (active = false) => ({
+  ...buttonStyle,
+  background:active ? "linear-gradient(180deg,#1F3346,#152536)" : "linear-gradient(180deg,#121B28,#0F1722)",
+  border:active ? "1px solid rgba(125,211,252,0.42)" : "1px solid rgba(148,163,184,0.16)",
+  color:active ? "#F8FBFF" : "#98ABC0",
+  boxShadow:active ? "0 12px 26px rgba(37,99,235,0.18)" : "0 8px 18px rgba(2,6,23,0.18)",
+  fontSize:12,
+  fontWeight:700,
+  padding:"9px 12px",
+  borderRadius:14,
+  minWidth:0,
+  flex:"1 1 0"
+})
 
