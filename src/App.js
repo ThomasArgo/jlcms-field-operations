@@ -4687,13 +4687,6 @@ export default function JLCMSApp() {
       </button>
 
       <button
-        onClick={()=>setTab("clients")}
-        style={appNavButtonStyle(tab==="clients")}
-      >
-        Clients
-      </button>
-
-      <button
         onClick={()=>setTab("more")}
         style={appNavButtonStyle(tab==="more")}
       >
@@ -4799,6 +4792,7 @@ function HomeTab({ props, invoices, billingCounts, setTab, currentUser, todayFoc
           gap:10
         }}>
           <button style={buttonStyle} onClick={()=>setTab("schedule")}>Schedule</button>
+          <button style={buttonStyle} onClick={()=>setTab("clients")}>Clients</button>
           <button style={buttonStyle} onClick={()=>setTab("vendors")}>Contractors</button>
           <button style={buttonStyle} onClick={()=>setTab("inspectors")}>Inspectors</button>
           <button style={buttonStyle} onClick={()=>setTab("mileage")}>Mileage</button>
@@ -7017,10 +7011,10 @@ function ScheduleTab({ activeUser, currentUser, teamUsers = [], recurringWeeklyS
   const plannerActionButtonStyle = (variant="neutral") => ({
     ...(variant==="primary" ? btnBlue : variant==="danger" ? btnDanger : btnGray),
     padding:isMobile ? "8px 12px" : "7px 11px",
-    fontSize:variant==="primary" ? 14 : 12,
-    fontWeight:variant==="primary" ? 800 : 700,
+    fontSize:(variant==="primary" || variant==="neutral") ? 14 : 12,
+    fontWeight:(variant==="primary" || variant==="neutral") ? 800 : 700,
     borderRadius:12,
-    letterSpacing:variant==="primary" ? 0.3 : 0.5,
+    letterSpacing:(variant==="primary" || variant==="neutral") ? 0.3 : 0.5,
     boxShadow:"none",
     minHeight:36
   })
