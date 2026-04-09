@@ -7017,9 +7017,10 @@ function ScheduleTab({ activeUser, currentUser, teamUsers = [], recurringWeeklyS
   const plannerActionButtonStyle = (variant="neutral") => ({
     ...(variant==="primary" ? btnBlue : variant==="danger" ? btnDanger : btnGray),
     padding:isMobile ? "8px 12px" : "7px 11px",
-    fontSize:12,
+    fontSize:variant==="primary" ? 14 : 12,
+    fontWeight:variant==="primary" ? 800 : 700,
     borderRadius:12,
-    letterSpacing:0.5,
+    letterSpacing:variant==="primary" ? 0.3 : 0.5,
     boxShadow:"none",
     minHeight:36
   })
@@ -9380,11 +9381,15 @@ const appNavButtonStyle = (active = false) => ({
   border:active ? "1px solid rgba(125,211,252,0.42)" : "1px solid rgba(148,163,184,0.16)",
   color:active ? "#F8FBFF" : "#98ABC0",
   boxShadow:active ? "0 12px 26px rgba(37,99,235,0.18)" : "0 8px 18px rgba(2,6,23,0.18)",
-  fontSize:12,
+  fontSize:11,
   fontWeight:700,
-  padding:"9px 12px",
+  lineHeight:1.1,
+  padding:"8px 8px",
   borderRadius:14,
   minWidth:0,
+  whiteSpace:"nowrap",
+  overflow:"hidden",
+  textOverflow:"ellipsis",
   flex:"1 1 0"
 })
 
