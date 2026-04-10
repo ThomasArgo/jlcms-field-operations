@@ -29,6 +29,22 @@ import {
   updateUser as updateSupabaseUser,
   deleteUser as deleteSupabaseUser
 } from "./services/users"
+import {
+  getTasks as fetchTasksFromSupabase,
+  createTask as createSupabaseTask,
+  updateTask as updateSupabaseTask,
+  deleteTask as deleteSupabaseTask
+} from "./services/tasks"
+import {
+  getRecurringWeeklySchedule as fetchRecurringWeeklyScheduleFromSupabase,
+  createRecurringWeeklySchedule as createSupabaseRecurringWeeklySchedule,
+  updateRecurringWeeklySchedule as updateSupabaseRecurringWeeklySchedule,
+  deleteRecurringWeeklySchedule as deleteSupabaseRecurringWeeklySchedule,
+  getOneOffScheduleBlocks as fetchOneOffScheduleBlocksFromSupabase,
+  createOneOffScheduleBlock as createSupabaseOneOffScheduleBlock,
+  updateOneOffScheduleBlock as updateSupabaseOneOffScheduleBlock,
+  deleteOneOffScheduleBlock as deleteSupabaseOneOffScheduleBlock
+} from "./services/schedule"
 import { getOrCreateWorkspaceTeam, syncWorkspaceTeam } from "./services/workspace"
 import { getWorkspaceState, saveWorkspaceState } from "./services/workspaceState"
 
@@ -210,10 +226,12 @@ const NOTIFICATION_KIND = {
   dueNow: "due_now",
   startsNow: "starts_now",
   late: "late",
+  overdueInterval: "overdue_interval",
   direct: "direct"
 }
 const REMINDER_WINDOW_MS = 2 * 60 * 1000
 const LATE_REMINDER_DELAY_MS = 10 * 60 * 1000
+const OVERDUE_REMINDER_INTERVAL_MS = 6 * 60 * 60 * 1000
 
 
 /* -- Helpers -- */
@@ -545,6 +563,17 @@ const getDateTimeForOccurrence = (dateIso, timeStr, fallback = "start") => {
 const formatOccurrenceTimeLabel = (timeStr, fallbackLabel = "Any time") => displayTimeValue(timeStr) || fallbackLabel
 const buildPlannerNotificationKey = ({ userId, itemType, itemId, occurrenceDate, occurrenceTime = "", kind }) =>
   ["planner", String(userId || "").trim(), String(itemType || "").trim(), String(itemId || "").trim(), String(occurrenceDate || "").trim(), String(occurrenceTime || "none").trim(), String(kind || "").trim()].join(":")
+const formatLatenessDuration = (milliseconds = 0) => {
+  const totalMinutes = Math.max(0, Math.floor(Number(milliseconds || 0) / 60000))
+  const days = Math.floor(totalMinutes / (24 * 60))
+  const hours = Math.floor((totalMinutes % (24 * 60)) / 60)
+  const minutes = totalMinutes % 60
+  const parts = []
+  if (days) parts.push(`${days} day${days===1 ? "" : "s"}`)
+  if (hours) parts.push(`${hours} hour${hours===1 ? "" : "s"}`)
+  if (!days && !hours) parts.push(`${minutes} minute${minutes===1 ? "" : "s"}`)
+  return parts.slice(0, 2).join(", ")
+}
 const normalizeNotificationLedger = (rawLedger = {}) => {
   if (!rawLedger || typeof rawLedger !== "object") return {}
   return Object.fromEntries(
@@ -1752,6 +1781,7 @@ const toSupabaseUserPayload = (user, teamId) => ({
 })
 const fromSupabaseUserPayload = (user = {}) => ({
   id: String(user.legacy_user_id || user.id || "").trim() || userId(),
+  _dbId: String(user.id || "").trim(),
   name: String(user.name || "").trim(),
   email: String(user.email || "").trim().toLowerCase(),
   password: String(user?.metadata?.password || ""),
@@ -1907,6 +1937,7 @@ const buildSingleCompanyAuthState = (storedUsers = [], storedTeams = []) => {
 
 const normalizeClientRecord = (client = {}) => ({
   id: String(client.id || client.legacy_client_id || "").trim() || uid(),
+  _dbId: String(client._dbId || "").trim(),
   name: String(client.name || "").trim(),
   company: String(client.company || "").trim(),
   address: String(client.address || "").trim(),
@@ -1964,6 +1995,7 @@ const toSupabaseClientPayload = (client, teamId) => ({
 const fromSupabaseClientPayload = (client = {}) =>
   normalizeClientRecord({
     ...client,
+    _dbId: client.id,
     jobId: client?.metadata?.jobId || "",
     createdAt: client?.metadata?.createdAt || client.created_at
   })
@@ -2022,6 +2054,174 @@ const fromSupabaseInspectorPayload = (inspector = {}) =>
     active: inspector?.metadata?.active,
     createdAt: inspector?.metadata?.createdAt || inspector.created_at
   })
+
+const buildSupabaseUserIdMap = (users = []) =>
+  Object.fromEntries(
+    (users || [])
+      .filter(user => String(user?.id || "").trim() && String(user?._dbId || "").trim())
+      .map(user => [String(user.id).trim(), String(user._dbId).trim()])
+  )
+
+const buildSupabaseClientIdMap = (clients = []) =>
+  Object.fromEntries(
+    (clients || [])
+      .filter(client => String(client?.id || "").trim() && String(client?._dbId || "").trim())
+      .map(client => [String(client.id).trim(), String(client._dbId).trim()])
+  )
+
+const fromSupabaseTaskPayload = (task = {}, userLegacyIdByDbId = {}, clientLegacyIdByDbId = {}) => {
+  const record = task?.record && typeof task.record === "object" ? task.record : {}
+  return {
+    ...record,
+    id: String(task.legacy_task_id || record.id || task.id || "").trim() || uid(),
+    _dbId: String(task.id || "").trim(),
+    assignedUserId: String(record.assignedUserId || userLegacyIdByDbId?.[task.assigned_user_id] || "").trim(),
+    propertyId: String(record.propertyId || "").trim(),
+    clientId: String(record.clientId || clientLegacyIdByDbId?.[task.client_id] || "").trim(),
+    title: String(task.title || record.title || "").trim(),
+    detail: String(task.detail || record.detail || "").trim(),
+    dueDate: String(task.due_date || record.dueDate || "").trim(),
+    dueTime: String(task.due_time || record.dueTime || "").trim(),
+    priority: String(task.priority || record.priority || "Normal").trim() || "Normal",
+    status: String(task.status || record.status || "To Do").trim() || "To Do",
+    createdAt: record.createdAt || task.created_at || now(),
+    updatedAt: record.updatedAt || task.updated_at || now(),
+    assignmentUpdatedAt: record.assignmentUpdatedAt || record.updatedAt || task.updated_at || now(),
+    assignedById: String(record.assignedById || "").trim(),
+    assignedByName: String(record.assignedByName || "").trim()
+  }
+}
+
+const toSupabaseTaskPayload = (task, teamId, userSupabaseIdByLegacyId = {}, clientSupabaseIdByLegacyId = {}) => {
+  const normalized = {
+    ...task,
+    id: String(task?.id || "").trim() || uid(),
+    title: String(task?.title || "").trim(),
+    detail: String(task?.detail || "").trim(),
+    assignedUserId: String(task?.assignedUserId || "").trim(),
+    propertyId: String(task?.propertyId || "").trim(),
+    clientId: String(task?.clientId || "").trim(),
+    dueDate: String(task?.dueDate || "").trim(),
+    dueTime: String(task?.dueTime || "").trim(),
+    priority: String(task?.priority || "Normal").trim() || "Normal",
+    status: String(task?.status || "To Do").trim() || "To Do",
+    createdAt: task?.createdAt || now(),
+    updatedAt: task?.updatedAt || now(),
+    assignmentUpdatedAt: task?.assignmentUpdatedAt || task?.updatedAt || now(),
+    assignedById: String(task?.assignedById || "").trim(),
+    assignedByName: String(task?.assignedByName || "").trim()
+  }
+  return {
+    team_id: teamId,
+    legacy_task_id: normalized.id,
+    assigned_user_id: userSupabaseIdByLegacyId?.[normalized.assignedUserId] || null,
+    property_id: null,
+    client_id: clientSupabaseIdByLegacyId?.[normalized.clientId] || null,
+    title: normalized.title,
+    detail: normalized.detail || null,
+    due_date: normalizeDateInput(normalized.dueDate) || null,
+    due_time: normalized.dueTime || null,
+    priority: normalized.priority,
+    status: normalized.status,
+    record: normalized
+  }
+}
+
+const fromSupabaseRecurringSchedulePayload = (entry = {}, userLegacyIdByDbId = {}) => {
+  const record = entry?.record && typeof entry.record === "object" ? entry.record : {}
+  return {
+    ...record,
+    id: String(entry.legacy_schedule_id || record.id || entry.id || "").trim() || uid(),
+    _dbId: String(entry.id || "").trim(),
+    userId: String(record.userId || userLegacyIdByDbId?.[entry.user_id] || "").trim(),
+    day: String(entry.day || record.day || "").trim(),
+    start: String(entry.start_time || record.start || "").trim(),
+    end: String(entry.end_time || record.end || "").trim(),
+    note: String(entry.note || record.note || "").trim(),
+    repeatRule: String(record.repeatRule || "Weekly").trim() || "Weekly",
+    endDate: String(record.endDate || "").trim(),
+    createdBy: String(entry.created_by || record.createdBy || "").trim(),
+    createdAt: record.createdAt || entry.created_at || now(),
+    updatedAt: record.updatedAt || entry.updated_at || now()
+  }
+}
+
+const toSupabaseRecurringSchedulePayload = (entry, teamId, userSupabaseIdByLegacyId = {}) => {
+  const normalized = {
+    ...entry,
+    id: String(entry?.id || "").trim() || uid(),
+    userId: String(entry?.userId || "").trim(),
+    day: String(entry?.day || "").trim(),
+    start: String(entry?.start || "").trim(),
+    end: String(entry?.end || "").trim(),
+    note: String(entry?.note || "").trim(),
+    repeatRule: String(entry?.repeatRule || "Weekly").trim() || "Weekly",
+    endDate: String(entry?.endDate || "").trim(),
+    createdBy: String(entry?.createdBy || "").trim(),
+    createdAt: entry?.createdAt || now(),
+    updatedAt: entry?.updatedAt || now()
+  }
+  return {
+    team_id: teamId,
+    legacy_schedule_id: normalized.id,
+    user_id: userSupabaseIdByLegacyId?.[normalized.userId] || null,
+    day: normalized.day,
+    start_time: normalized.start || null,
+    end_time: normalized.end || null,
+    note: normalized.note || null,
+    created_by: normalized.createdBy || null,
+    record: normalized
+  }
+}
+
+const fromSupabaseOneOffSchedulePayload = (entry = {}, userLegacyIdByDbId = {}) => {
+  const record = entry?.record && typeof entry.record === "object" ? entry.record : {}
+  return {
+    ...record,
+    id: String(entry.legacy_block_id || record.id || entry.id || "").trim() || uid(),
+    _dbId: String(entry.id || "").trim(),
+    userId: String(record.userId || userLegacyIdByDbId?.[entry.user_id] || "").trim(),
+    date: String(entry.block_date || record.date || "").trim(),
+    start: String(entry.start_time || record.start || "").trim(),
+    end: String(entry.end_time || record.end || "").trim(),
+    title: String(entry.title || record.title || "One-Off Block").trim(),
+    detail: String(entry.detail || record.detail || "").trim(),
+    type: String(entry.type || record.type || "supplement").trim() || "supplement",
+    createdBy: String(entry.created_by || record.createdBy || "").trim(),
+    createdAt: record.createdAt || entry.created_at || now(),
+    updatedAt: record.updatedAt || entry.updated_at || now()
+  }
+}
+
+const toSupabaseOneOffSchedulePayload = (entry, teamId, userSupabaseIdByLegacyId = {}) => {
+  const normalized = {
+    ...entry,
+    id: String(entry?.id || "").trim() || uid(),
+    userId: String(entry?.userId || "").trim(),
+    date: String(entry?.date || "").trim(),
+    start: String(entry?.start || "").trim(),
+    end: String(entry?.end || "").trim(),
+    title: String(entry?.title || "").trim(),
+    detail: String(entry?.detail || "").trim(),
+    type: String(entry?.type || "supplement").trim() || "supplement",
+    createdBy: String(entry?.createdBy || "").trim(),
+    createdAt: entry?.createdAt || now(),
+    updatedAt: entry?.updatedAt || now()
+  }
+  return {
+    team_id: teamId,
+    legacy_block_id: normalized.id,
+    user_id: userSupabaseIdByLegacyId?.[normalized.userId] || null,
+    block_date: normalizeDateInput(normalized.date) || null,
+    start_time: normalized.start || null,
+    end_time: normalized.end || null,
+    title: normalized.title || null,
+    detail: normalized.detail || null,
+    type: normalized.type,
+    created_by: normalized.createdBy || null,
+    record: normalized
+  }
+}
 
 
 /* ---- Push Notification helper ---- */
@@ -2101,6 +2301,9 @@ export default function JLCMSApp() {
   const workspaceLoadedRef = useRef(false)
   const workspaceTeamIdRef = useRef("")
   const syncedPropertyIdsRef = useRef([])
+  const syncedTaskIdsRef = useRef([])
+  const syncedRecurringIdsRef = useRef([])
+  const syncedOneOffIdsRef = useRef([])
   const notifPanel = topPanel==="alerts"
   const showQuickRef = topPanel==="portals"
   const showLegend = topPanel==="key"
@@ -2165,6 +2368,132 @@ export default function JLCMSApp() {
       }
       throw error
     })
+  }, [])
+
+  const persistTaskRecord = useCallback(async (taskRecord, userSupabaseIdByLegacyId = {}, clientSupabaseIdByLegacyId = {}) => {
+    const workspace = await getOrCreateWorkspaceTeam()
+    const payload = toSupabaseTaskPayload(taskRecord, workspace.id, userSupabaseIdByLegacyId, clientSupabaseIdByLegacyId)
+    return createSupabaseTask(payload).catch(async (error) => {
+      if (String(error?.code || "") === "23505") {
+        return updateSupabaseTask(taskRecord.id, payload)
+      }
+      throw error
+    })
+  }, [])
+
+  const persistRecurringScheduleRecord = useCallback(async (scheduleRecord, userSupabaseIdByLegacyId = {}) => {
+    const workspace = await getOrCreateWorkspaceTeam()
+    const payload = toSupabaseRecurringSchedulePayload(scheduleRecord, workspace.id, userSupabaseIdByLegacyId)
+    return createSupabaseRecurringWeeklySchedule(payload).catch(async (error) => {
+      if (String(error?.code || "") === "23505") {
+        return updateSupabaseRecurringWeeklySchedule(scheduleRecord.id, payload)
+      }
+      throw error
+    })
+  }, [])
+
+  const persistOneOffScheduleRecord = useCallback(async (blockRecord, userSupabaseIdByLegacyId = {}) => {
+    const workspace = await getOrCreateWorkspaceTeam()
+    const payload = toSupabaseOneOffSchedulePayload(blockRecord, workspace.id, userSupabaseIdByLegacyId)
+    return createSupabaseOneOffScheduleBlock(payload).catch(async (error) => {
+      if (String(error?.code || "") === "23505") {
+        return updateSupabaseOneOffScheduleBlock(blockRecord.id, payload)
+      }
+      throw error
+    })
+  }, [])
+
+  const savePlannerTaskRecord = useCallback(async (taskRecord) => {
+    try {
+      const saved = await persistTaskRecord(
+        taskRecord,
+        buildSupabaseUserIdMap(users),
+        buildSupabaseClientIdMap(clients)
+      )
+      const userLegacyIdByDbId = Object.fromEntries(
+        (users || [])
+          .filter(user => String(user?._dbId || "").trim())
+          .map(user => [String(user._dbId).trim(), String(user.id || "").trim()])
+      )
+      const clientLegacyIdByDbId = Object.fromEntries(
+        (clients || [])
+          .filter(client => String(client?._dbId || "").trim())
+          .map(client => [String(client._dbId).trim(), String(client.id || "").trim()])
+      )
+      return {
+        ok: true,
+        data: fromSupabaseTaskPayload(saved, userLegacyIdByDbId, clientLegacyIdByDbId)
+      }
+    } catch (error) {
+      console.error("Supabase task save failed.", error)
+      return { ok:false, error }
+    }
+  }, [clients, persistTaskRecord, users])
+
+  const savePlannerRecurringRecord = useCallback(async (scheduleRecord) => {
+    try {
+      const saved = await persistRecurringScheduleRecord(scheduleRecord, buildSupabaseUserIdMap(users))
+      const userLegacyIdByDbId = Object.fromEntries(
+        (users || [])
+          .filter(user => String(user?._dbId || "").trim())
+          .map(user => [String(user._dbId).trim(), String(user.id || "").trim()])
+      )
+      return {
+        ok: true,
+        data: fromSupabaseRecurringSchedulePayload(saved, userLegacyIdByDbId)
+      }
+    } catch (error) {
+      console.error("Supabase recurring schedule save failed.", error)
+      return { ok:false, error }
+    }
+  }, [persistRecurringScheduleRecord, users])
+
+  const savePlannerOneOffRecord = useCallback(async (blockRecord) => {
+    try {
+      const saved = await persistOneOffScheduleRecord(blockRecord, buildSupabaseUserIdMap(users))
+      const userLegacyIdByDbId = Object.fromEntries(
+        (users || [])
+          .filter(user => String(user?._dbId || "").trim())
+          .map(user => [String(user._dbId).trim(), String(user.id || "").trim()])
+      )
+      return {
+        ok: true,
+        data: fromSupabaseOneOffSchedulePayload(saved, userLegacyIdByDbId)
+      }
+    } catch (error) {
+      console.error("Supabase one-off schedule save failed.", error)
+      return { ok:false, error }
+    }
+  }, [persistOneOffScheduleRecord, users])
+
+  const removePlannerTaskRecord = useCallback(async (taskId) => {
+    try {
+      await deleteSupabaseTask(taskId)
+      return { ok:true }
+    } catch (error) {
+      console.error("Supabase task delete failed.", error)
+      return { ok:false, error }
+    }
+  }, [])
+
+  const removePlannerRecurringRecord = useCallback(async (scheduleId) => {
+    try {
+      await deleteSupabaseRecurringWeeklySchedule(scheduleId)
+      return { ok:true }
+    } catch (error) {
+      console.error("Supabase recurring schedule delete failed.", error)
+      return { ok:false, error }
+    }
+  }, [])
+
+  const removePlannerOneOffRecord = useCallback(async (blockId) => {
+    try {
+      await deleteSupabaseOneOffScheduleBlock(blockId)
+      return { ok:true }
+    } catch (error) {
+      console.error("Supabase one-off schedule delete failed.", error)
+      return { ok:false, error }
+    }
   }, [])
 
   const saveClientRecord = useCallback(async (clientRecord) => {
@@ -2330,7 +2659,7 @@ export default function JLCMSApp() {
         if (cancelled) return
         workspaceTeamIdRef.current = workspace.id
 
-        const [remoteClients, remoteVendors, remoteInspectors, remoteState, remoteUsersPayload] = await Promise.all([
+        const [remoteClients, remoteVendors, remoteInspectors, remoteState, remoteUsersPayload, remoteTasksPayload, remoteRecurringPayload, remoteOneOffPayload] = await Promise.all([
           fetchClientsFromSupabase().catch((error) => {
             console.error("Supabase clients load failed.", error)
             return []
@@ -2349,6 +2678,18 @@ export default function JLCMSApp() {
           }),
           fetchUsersFromSupabase().catch((error) => {
             console.error("Supabase users load failed.", error)
+            return []
+          }),
+          fetchTasksFromSupabase().catch((error) => {
+            console.error("Supabase tasks load failed.", error)
+            return []
+          }),
+          fetchRecurringWeeklyScheduleFromSupabase().catch((error) => {
+            console.error("Supabase recurring schedule load failed.", error)
+            return []
+          }),
+          fetchOneOffScheduleBlocksFromSupabase().catch((error) => {
+            console.error("Supabase one-off schedule load failed.", error)
             return []
           })
         ])
@@ -2378,17 +2719,30 @@ export default function JLCMSApp() {
               pendingRequests: [],
               roles: Array.isArray(workspace.roles) ? workspace.roles : ["ceo","management","operations","member"],
               rolePermissions: workspace.role_permissions || defaultRolePermissions()
-            }]
+          }]
         const { normalizedUsers, normalizedTeams } = buildSingleCompanyAuthState(remoteUsers, remoteTeams)
+        const userLegacyIdByDbId = Object.fromEntries(
+          (remoteUsersPayload || [])
+            .filter(user => String(user?.id || "").trim())
+            .map(user => [String(user.id).trim(), String(user.legacy_user_id || user.id || "").trim()])
+        )
+        const clientLegacyIdByDbId = Object.fromEntries(
+          (remoteClients || [])
+            .filter(client => String(client?.id || "").trim())
+            .map(client => [String(client.id).trim(), String(client.legacy_client_id || client.id || "").trim()])
+        )
+        const initialTasks = (remoteTasksPayload || []).map(task => fromSupabaseTaskPayload(task, userLegacyIdByDbId, clientLegacyIdByDbId))
+        const initialOneOffScheduleBlocks = (remoteOneOffPayload || []).map(entry => fromSupabaseOneOffSchedulePayload(entry, userLegacyIdByDbId))
+        const initialRecurringWeeklySchedule = (remoteRecurringPayload || []).map(entry => fromSupabaseRecurringSchedulePayload(entry, userLegacyIdByDbId))
 
         if (cancelled) return
 
         setProps((snapshot?.props || []).map(normalizeProp))
         setMileage((snapshot?.mileage || []).map(normalizeMileageEntry))
         setInvoices(Array.isArray(snapshot?.invoices) ? snapshot.invoices : [])
-        setTasks(Array.isArray(snapshot?.tasks) ? snapshot.tasks : [])
-        setOneOffScheduleBlocks(Array.isArray(snapshot?.oneOffScheduleBlocks) ? snapshot.oneOffScheduleBlocks : [])
-        setRecurringWeeklySchedule(Array.isArray(snapshot?.recurringWeeklySchedule) ? snapshot.recurringWeeklySchedule : [])
+        setTasks(initialTasks.length ? initialTasks : (Array.isArray(snapshot?.tasks) ? snapshot.tasks : []))
+        setOneOffScheduleBlocks(initialOneOffScheduleBlocks.length ? initialOneOffScheduleBlocks : (Array.isArray(snapshot?.oneOffScheduleBlocks) ? snapshot.oneOffScheduleBlocks : []))
+        setRecurringWeeklySchedule(initialRecurringWeeklySchedule.length ? initialRecurringWeeklySchedule : (Array.isArray(snapshot?.recurringWeeklySchedule) ? snapshot.recurringWeeklySchedule : []))
         setNotifications(Array.isArray(snapshot?.notifications) ? snapshot.notifications.map(normalizeNotificationRecord) : [])
         setUsers(normalizedUsers)
         setTeams(normalizedTeams)
@@ -2478,21 +2832,93 @@ export default function JLCMSApp() {
   }, [authLoaded, props, persistPropertyRecord])
   useEffect(() => {
     if (!authLoaded || !workspaceLoadedRef.current || !workspaceTeamIdRef.current) return
+    const userSupabaseIdByLegacyId = buildSupabaseUserIdMap(users)
+    const clientSupabaseIdByLegacyId = buildSupabaseClientIdMap(clients)
+    Promise.all((tasks || []).map(task => persistTaskRecord(task, userSupabaseIdByLegacyId, clientSupabaseIdByLegacyId)))
+      .catch((error) => {
+        console.error("Supabase tasks sync failed.", error)
+      })
+
+    const currentIds = (tasks || []).map(item => item.id)
+    const removedIds = syncedTaskIdsRef.current.filter(id => !currentIds.includes(id))
+    removedIds.forEach(id => {
+      deleteSupabaseTask(id).catch(error => {
+        console.error("Supabase task delete sync failed.", error)
+      })
+    })
+    syncedTaskIdsRef.current = currentIds
+  }, [authLoaded, tasks, users, clients, persistTaskRecord])
+  useEffect(() => {
+    if (!authLoaded || !workspaceLoadedRef.current || !workspaceTeamIdRef.current) return
+    const userSupabaseIdByLegacyId = buildSupabaseUserIdMap(users)
+    Promise.all((recurringWeeklySchedule || []).map(entry => persistRecurringScheduleRecord(entry, userSupabaseIdByLegacyId)))
+      .catch((error) => {
+        console.error("Supabase recurring schedule sync failed.", error)
+      })
+
+    const currentIds = (recurringWeeklySchedule || []).map(item => item.id)
+    const removedIds = syncedRecurringIdsRef.current.filter(id => !currentIds.includes(id))
+    removedIds.forEach(id => {
+      deleteSupabaseRecurringWeeklySchedule(id).catch(error => {
+        console.error("Supabase recurring schedule delete sync failed.", error)
+      })
+    })
+    syncedRecurringIdsRef.current = currentIds
+  }, [authLoaded, recurringWeeklySchedule, users, persistRecurringScheduleRecord])
+  useEffect(() => {
+    if (!authLoaded || !workspaceLoadedRef.current || !workspaceTeamIdRef.current) return
+    const userSupabaseIdByLegacyId = buildSupabaseUserIdMap(users)
+    Promise.all((oneOffScheduleBlocks || []).map(block => persistOneOffScheduleRecord(block, userSupabaseIdByLegacyId)))
+      .catch((error) => {
+        console.error("Supabase one-off schedule sync failed.", error)
+      })
+
+    const currentIds = (oneOffScheduleBlocks || []).map(item => item.id)
+    const removedIds = syncedOneOffIdsRef.current.filter(id => !currentIds.includes(id))
+    removedIds.forEach(id => {
+      deleteSupabaseOneOffScheduleBlock(id).catch(error => {
+        console.error("Supabase one-off schedule delete sync failed.", error)
+      })
+    })
+    syncedOneOffIdsRef.current = currentIds
+  }, [authLoaded, oneOffScheduleBlocks, users, persistOneOffScheduleRecord])
+  useEffect(() => {
+    if (!authLoaded || !workspaceLoadedRef.current || !workspaceTeamIdRef.current) return
     let cancelled = false
     const syncRemoteWorkspace = async () => {
       try {
-        const [remoteState, remoteUsersPayload] = await Promise.all([
+        const [remoteState, remoteUsersPayload, remoteTasksPayload, remoteRecurringPayload, remoteOneOffPayload, remoteClientsPayload] = await Promise.all([
           getWorkspaceState(workspaceTeamIdRef.current),
-          fetchUsersFromSupabase()
+          fetchUsersFromSupabase(),
+          fetchTasksFromSupabase(),
+          fetchRecurringWeeklyScheduleFromSupabase(),
+          fetchOneOffScheduleBlocksFromSupabase(),
+          fetchClientsFromSupabase()
         ])
         if (cancelled) return
         const remoteData = remoteState?.data || {}
         const remoteUsers = (remoteUsersPayload || []).map(fromSupabaseUserPayload)
+        const userLegacyIdByDbId = Object.fromEntries(
+          (remoteUsersPayload || [])
+            .filter(user => String(user?.id || "").trim())
+            .map(user => [String(user.id).trim(), String(user.legacy_user_id || user.id || "").trim()])
+        )
+        const clientLegacyIdByDbId = Object.fromEntries(
+          (remoteClientsPayload || [])
+            .filter(client => String(client?.id || "").trim())
+            .map(client => [String(client.id).trim(), String(client.legacy_client_id || client.id || "").trim()])
+        )
         const applyRemoteWorkspaceState = (normalizedUserList) => {
           const remoteMessages = sanitizeMessages(Array.isArray(remoteData?.messages) ? remoteData.messages : [], normalizedUserList)
-          const remoteTasks = Array.isArray(remoteData?.tasks) ? remoteData.tasks : []
-          const remoteOneOff = Array.isArray(remoteData?.oneOffScheduleBlocks) ? remoteData.oneOffScheduleBlocks : []
-          const remoteRecurring = Array.isArray(remoteData?.recurringWeeklySchedule) ? remoteData.recurringWeeklySchedule : []
+          const remoteTasks = (remoteTasksPayload || []).length
+            ? (remoteTasksPayload || []).map(task => fromSupabaseTaskPayload(task, userLegacyIdByDbId, clientLegacyIdByDbId))
+            : (Array.isArray(remoteData?.tasks) ? remoteData.tasks : [])
+          const remoteOneOff = (remoteOneOffPayload || []).length
+            ? (remoteOneOffPayload || []).map(entry => fromSupabaseOneOffSchedulePayload(entry, userLegacyIdByDbId))
+            : (Array.isArray(remoteData?.oneOffScheduleBlocks) ? remoteData.oneOffScheduleBlocks : [])
+          const remoteRecurring = (remoteRecurringPayload || []).length
+            ? (remoteRecurringPayload || []).map(entry => fromSupabaseRecurringSchedulePayload(entry, userLegacyIdByDbId))
+            : (Array.isArray(remoteData?.recurringWeeklySchedule) ? remoteData.recurringWeeklySchedule : [])
           const remoteNotifications = Array.isArray(remoteData?.notifications) ? remoteData.notifications.map(normalizeNotificationRecord) : []
           const remoteLedger = normalizeNotificationLedger(remoteData?.notificationLedger || remoteData?.shownOneTimeNotifications || {})
 
@@ -2770,15 +3196,15 @@ export default function JLCMSApp() {
     const dueToday = pendingTasks.filter(t=>t.dueDate===localDate)
 
     pendingTasks
-      .filter(t=>t.assignedUserId && t.dueDate===localDate && t.dueTime)
+      .filter(t=>t.assignedUserId && t.dueDate)
       .forEach(task=>{
         const dueAt = getDateTimeForOccurrence(task.dueDate, task.dueTime, "end")
         if (!dueAt) return
         const reminderAt = new Date(dueAt.getTime() - 10 * 60000)
         const lateAt = new Date(dueAt.getTime() + LATE_REMINDER_DELAY_MS)
-        const occurrenceTime = formatTime24Hour(task.dueTime)
+        const occurrenceTime = formatTime24Hour(task.dueTime) || "23:59"
         const body = `Due ${displayDate(task.dueDate)} at ${formatOccurrenceTimeLabel(task.dueTime)}${task.detail ? ` | ${task.detail}` : ""}`
-        if (now_ >= reminderAt && now_.getTime() <= reminderAt.getTime() + REMINDER_WINDOW_MS) {
+        if (task.dueTime && now_ >= reminderAt && now_.getTime() <= reminderAt.getTime() + REMINDER_WINDOW_MS) {
           enqueueUserNotification({
             userId: task.assignedUserId,
             eventKey: buildPlannerNotificationKey({ userId:task.assignedUserId, itemType:"task", itemId:task.id, occurrenceDate:task.dueDate, occurrenceTime, kind:NOTIFICATION_KIND.reminder10 }),
@@ -2787,7 +3213,7 @@ export default function JLCMSApp() {
             body
           })
         }
-        if (now_ >= dueAt && now_.getTime() <= dueAt.getTime() + REMINDER_WINDOW_MS) {
+        if (task.dueTime && now_ >= dueAt && now_.getTime() <= dueAt.getTime() + REMINDER_WINDOW_MS) {
           enqueueUserNotification({
             userId: task.assignedUserId,
             eventKey: buildPlannerNotificationKey({ userId:task.assignedUserId, itemType:"task", itemId:task.id, occurrenceDate:task.dueDate, occurrenceTime, kind:NOTIFICATION_KIND.dueNow }),
@@ -2804,6 +3230,25 @@ export default function JLCMSApp() {
             title: `${task.title || "Task"} is overdue`,
             body
           })
+        }
+
+        if (now_ >= dueAt) {
+          const elapsedSinceDue = now_.getTime() - dueAt.getTime()
+          const overdueIntervalCount = Math.floor(elapsedSinceDue / OVERDUE_REMINDER_INTERVAL_MS)
+          if (overdueIntervalCount >= 1) {
+            const checkpointAt = new Date(dueAt.getTime() + overdueIntervalCount * OVERDUE_REMINDER_INTERVAL_MS)
+            if (now_.getTime() <= checkpointAt.getTime() + REMINDER_WINDOW_MS) {
+              const checkpointDate = getLocalDateKey(checkpointAt)
+              const checkpointTime = `${String(checkpointAt.getHours()).padStart(2, "0")}:${String(checkpointAt.getMinutes()).padStart(2, "0")}`
+              enqueueUserNotification({
+                userId: task.assignedUserId,
+                eventKey: buildPlannerNotificationKey({ userId:task.assignedUserId, itemType:"task", itemId:task.id, occurrenceDate:checkpointDate, occurrenceTime:checkpointTime, kind:NOTIFICATION_KIND.overdueInterval }),
+                type: "deadline",
+                title: `Task overdue: ${task.title || "Task"}`,
+                body: `Overdue by ${formatLatenessDuration(elapsedSinceDue)}${task.detail ? ` | ${task.detail}` : ""}`
+              })
+            }
+          }
         }
       })
 
@@ -4536,7 +4981,7 @@ export default function JLCMSApp() {
       
       
       {/* == SCHEDULE TAB == */}
-      {tab==="schedule"&&(can("schedule","view") ? <ScheduleTab activeUser={activeUser} currentUser={currentUser} teamUsers={teamUsers} notifications={notifications} fireNotif={fireNotif} recurringWeeklySchedule={recurringWeeklySchedule} setRecurringWeeklySchedule={setRecurringWeeklySchedule} oneOffScheduleBlocks={oneOffScheduleBlocks} setOneOffScheduleBlocks={setOneOffScheduleBlocks} tasks={tasks} setTasks={setTasks} properties={props} clients={clients} canAdd={can("schedule","add")} canEdit={can("schedule","edit")} canDelete={can("schedule","delete")} canManagePermanent={can("permanentSchedule","add")} onImmediateOneTimeAlert={notifyCurrentUserOneTimeEvent} /> : <AccessDenied page="Schedule" />)}
+      {tab==="schedule"&&(can("schedule","view") ? <ScheduleTab activeUser={activeUser} currentUser={currentUser} teamUsers={teamUsers} notifications={notifications} fireNotif={fireNotif} recurringWeeklySchedule={recurringWeeklySchedule} setRecurringWeeklySchedule={setRecurringWeeklySchedule} oneOffScheduleBlocks={oneOffScheduleBlocks} setOneOffScheduleBlocks={setOneOffScheduleBlocks} tasks={tasks} setTasks={setTasks} properties={props} clients={clients} canAdd={can("schedule","add")} canEdit={can("schedule","edit")} canDelete={can("schedule","delete")} canManagePermanent={can("permanentSchedule","add")} onImmediateOneTimeAlert={notifyCurrentUserOneTimeEvent} onSaveTaskRecord={savePlannerTaskRecord} onDeleteTaskRecord={removePlannerTaskRecord} onSaveRecurringRecord={savePlannerRecurringRecord} onDeleteRecurringRecord={removePlannerRecurringRecord} onSaveOneOffRecord={savePlannerOneOffRecord} onDeleteOneOffRecord={removePlannerOneOffRecord} /> : <AccessDenied page="Schedule" />)}
 
 
       {tab==="vendors"&&(can("vendors","view") ? <VendorTab vendors={vendors} setVendors={setVendors} canAdd={can("vendors","add")} canEdit={can("vendors","edit")} canDelete={can("vendors","delete")} onSaveVendor={saveVendorRecord} onDeleteVendor={removeVendorRecord} /> : <AccessDenied page="Vendors" />)}
@@ -6449,7 +6894,7 @@ function TimePicker({ value, onChange, style, allowEmpty=false, storageFormat="1
 }
 
 /* -------------------------- SCHEDULE TAB -------------------------- */
-function ScheduleTab({ activeUser, currentUser, teamUsers = [], recurringWeeklySchedule = [], setRecurringWeeklySchedule, oneOffScheduleBlocks = [], setOneOffScheduleBlocks, tasks = [], setTasks, properties = [], clients = [], canAdd=true, canEdit=true, canDelete=true, canManagePermanent=false, fireNotif, onImmediateOneTimeAlert }) {
+function ScheduleTab({ activeUser, currentUser, teamUsers = [], recurringWeeklySchedule = [], setRecurringWeeklySchedule, oneOffScheduleBlocks = [], setOneOffScheduleBlocks, tasks = [], setTasks, properties = [], clients = [], canAdd=true, canEdit=true, canDelete=true, canManagePermanent=false, fireNotif, onImmediateOneTimeAlert, onSaveTaskRecord, onDeleteTaskRecord, onSaveRecurringRecord, onDeleteRecurringRecord, onSaveOneOffRecord, onDeleteOneOffRecord }) {
   const { isPhone: isMobile } = viewportInfo()
   const sectionGap = isMobile ? 8 : 10
   const sectionMargin = isMobile ? 12 : 16
@@ -6478,7 +6923,13 @@ function ScheduleTab({ activeUser, currentUser, teamUsers = [], recurringWeeklyS
   const [taskForm, setTaskForm] = useState({ title:"", detail:"", assignedUserId:"", propertyId:"", clientId:"", dueDate:todayDate, dueTime:"", priority:"Normal", status:"To Do" })
   const [assignmentOpen, setAssignmentOpen] = useState(false)
   const [assignmentForm, setAssignmentForm] = useState({ type:"oneoff", userId:"", title:"", notes:"", date:todayDate, start:"08:00 AM", end:"05:00 PM", oneOffMode:"supplement", dueDate:todayDate, dueTime:"", priority:"Normal", status:"To Do", repeatRule:"Weekly", endDate:"", days:[todayDay] })
+  const [plannerSaveError, setPlannerSaveError] = useState("")
+  const [plannerSaving, setPlannerSaving] = useState(false)
   const denyAccess = () => window.alert("You currently have view-only access. Ask management or the CEO to assign your role and permissions.")
+  const readPlannerSaveError = (error) => {
+    const message = String(error?.message || error?.details || error?.hint || "").trim()
+    return message || "Unable to save this planner item to Supabase. Please try again."
+  }
 
   useEffect(() => {
     window.scrollTo({ top:0, left:0, behavior:"auto" })
@@ -6531,7 +6982,31 @@ function ScheduleTab({ activeUser, currentUser, teamUsers = [], recurringWeeklyS
   }
 
   const todayBlocks = getBlocksForDate(todayDate, todayDay)
-  const todayTasks = tasks.map(t=>({ ...t, status:t.status || "To Do", priority:t.priority || "Normal" })).filter(t=>t.assignedUserId && t.dueDate===todayDate && t.status!=="Done")
+  const weekEndDate = weekDays[weekDays.length - 1]?.date || todayDate
+  const enrichedTasks = tasks
+    .map(task => {
+      const normalizedTask = { ...task, status:task.status || "To Do", priority:task.priority || "Normal" }
+      const dueAt = normalizedTask.dueDate ? getDateTimeForOccurrence(normalizedTask.dueDate, normalizedTask.dueTime, "end") : null
+      const isDone = normalizedTask.status==="Done"
+      const isOverdue = !isDone && !!dueAt && dueAt.getTime() < localNow.getTime()
+      const latenessMs = isOverdue && dueAt ? localNow.getTime() - dueAt.getTime() : 0
+      let urgencyRank = 4
+      if (isOverdue) urgencyRank = 0
+      else if (normalizedTask.dueDate===todayDate) urgencyRank = 1
+      else if (normalizedTask.dueDate && normalizedTask.dueDate <= weekEndDate) urgencyRank = 2
+      else urgencyRank = 3
+      return {
+        ...normalizedTask,
+        dueAt,
+        isDone,
+        isOverdue,
+        latenessMs,
+        overdueLabel: isOverdue ? `Overdue by ${formatLatenessDuration(latenessMs)}` : "",
+        urgencyRank
+      }
+    })
+    .filter(task => task.assignedUserId)
+  const todayTasks = enrichedTasks.filter(t=>t.dueDate===todayDate && !t.isDone)
 
   const todayByUser = teamUsers
     .map(user=>({ user, blocks:todayBlocks.filter(b=>b.userId===user.id), tasks:todayTasks.filter(t=>t.assignedUserId===user.id) }))
@@ -6539,24 +7014,37 @@ function ScheduleTab({ activeUser, currentUser, teamUsers = [], recurringWeeklyS
 
   const mineUserId = currentUser?.id || activeUser?.id || ""
   const mineToday = todayByUser.find(row=>row.user.id===mineUserId) || { user: currentUser || activeUser || null, blocks: todayBlocks.filter(b=>b.userId===mineUserId), tasks: todayTasks.filter(t=>t.assignedUserId===mineUserId) }
-  const mineUpcomingTasks = [...tasks]
-    .map(t=>({ ...t, status:t.status || "To Do", priority:t.priority || "Normal" }))
-    .filter(t=>t.assignedUserId===mineUserId && t.status!=="Done" && `${t.dueDate || ""}` >= todayDate)
-    .sort((a,b)=>`${a.dueDate || "9999-12-31"} ${a.dueTime || "23:59"}`.localeCompare(`${b.dueDate || "9999-12-31"} ${b.dueTime || "23:59"}`))
-    .slice(0,6)
+  const mineOpenWork = enrichedTasks
+    .filter(task => task.assignedUserId===mineUserId && !task.isDone)
+    .filter(task => task.isOverdue || task.dueDate===todayDate || (!!task.dueDate && task.dueDate <= weekEndDate) || !task.dueDate)
+    .sort((a,b) => {
+      if (a.urgencyRank !== b.urgencyRank) return a.urgencyRank - b.urgencyRank
+      if (a.isOverdue && b.isOverdue) return b.latenessMs - a.latenessMs
+      return `${a.dueDate || "9999-12-31"} ${a.dueTime || "23:59"}`.localeCompare(`${b.dueDate || "9999-12-31"} ${b.dueTime || "23:59"}`)
+    })
+    .slice(0,10)
 
-  const saveRecurring = () => {
+  const saveRecurring = async () => {
     if (!canManageRecurring) { denyAccess(); return }
     if (!recurringForm.userId || !recurringForm.day || !recurringForm.start || !recurringForm.end) return
     const payload = { id: recurringEditId || uid(), userId: recurringForm.userId, day: recurringForm.day, start: recurringForm.start, end: recurringForm.end, note: recurringForm.note.trim(), createdBy: currentUser?.id || "", createdAt: recurringEditId ? (recurringWeeklySchedule.find(x=>x.id===recurringEditId)?.createdAt || now()) : now(), updatedAt: now() }
-    setRecurringWeeklySchedule(prev=> recurringEditId ? prev.map(x=>x.id===recurringEditId ? payload : x) : [...prev, payload])
+    setPlannerSaveError("")
+    setPlannerSaving(true)
+    const result = onSaveRecurringRecord ? await onSaveRecurringRecord(payload) : { ok:true, data:payload }
+    setPlannerSaving(false)
+    if (!result?.ok) {
+      setPlannerSaveError(readPlannerSaveError(result?.error))
+      return
+    }
+    const savedPayload = result.data || payload
+    setRecurringWeeklySchedule(prev=> recurringEditId ? prev.map(x=>x.id===recurringEditId ? savedPayload : x) : [...prev, savedPayload])
     if (onImmediateOneTimeAlert) {
       onImmediateOneTimeAlert({
-        userId: payload.userId,
-        eventKey: ["schedule_assignment", "recurring", payload.userId, payload.id, payload.updatedAt].join(":"),
+        userId: savedPayload.userId,
+        eventKey: ["schedule_assignment", "recurring", savedPayload.userId, savedPayload.id, savedPayload.updatedAt].join(":"),
         type: "schedule",
-        title: `Recurring Schedule Added - ${payload.day}`,
-        body: `${payload.start} - ${payload.end}${payload.note ? ` | ${payload.note}` : ""}`
+        title: `Recurring Schedule Added - ${savedPayload.day}`,
+        body: `${savedPayload.start} - ${savedPayload.end}${savedPayload.note ? ` | ${savedPayload.note}` : ""}`
       })
     }
     setRecurringEditId("")
@@ -6584,23 +7072,40 @@ function ScheduleTab({ activeUser, currentUser, teamUsers = [], recurringWeeklyS
     })
     setAssignmentOpen(true)
   }
-  const removeRecurring = (id) => {
+  const removeRecurring = async (id) => {
     if (!canManageRecurring || !canDelete) { denyAccess(); return }
+    setPlannerSaveError("")
+    setPlannerSaving(true)
+    const result = onDeleteRecurringRecord ? await onDeleteRecurringRecord(id) : { ok:true }
+    setPlannerSaving(false)
+    if (!result?.ok) {
+      setPlannerSaveError(readPlannerSaveError(result?.error))
+      return
+    }
     setRecurringWeeklySchedule(prev=>prev.filter(x=>x.id!==id))
   }
 
-  const saveOneOff = () => {
+  const saveOneOff = async () => {
     if (!canManageSchedule) { denyAccess(); return }
     if (!oneOffForm.userId || !oneOffForm.date || !oneOffForm.start || !oneOffForm.end || !oneOffForm.title.trim()) return
     const payload = { id: oneOffEditId || uid(), userId: oneOffForm.userId, date: oneOffForm.date, start: oneOffForm.start, end: oneOffForm.end, title: oneOffForm.title.trim(), detail: oneOffForm.detail.trim(), type: oneOffForm.type || "supplement", createdBy: currentUser?.id || "", createdAt: oneOffEditId ? (oneOffScheduleBlocks.find(x=>x.id===oneOffEditId)?.createdAt || now()) : now(), updatedAt: now() }
-    setOneOffScheduleBlocks(prev=> oneOffEditId ? prev.map(x=>x.id===oneOffEditId ? payload : x) : [...prev, payload])
+    setPlannerSaveError("")
+    setPlannerSaving(true)
+    const result = onSaveOneOffRecord ? await onSaveOneOffRecord(payload) : { ok:true, data:payload }
+    setPlannerSaving(false)
+    if (!result?.ok) {
+      setPlannerSaveError(readPlannerSaveError(result?.error))
+      return
+    }
+    const savedPayload = result.data || payload
+    setOneOffScheduleBlocks(prev=> oneOffEditId ? prev.map(x=>x.id===oneOffEditId ? savedPayload : x) : [...prev, savedPayload])
     if (onImmediateOneTimeAlert) {
       onImmediateOneTimeAlert({
-        userId: payload.userId,
-        eventKey: ["schedule_assignment", "oneoff", payload.userId, payload.id, payload.updatedAt].join(":"),
+        userId: savedPayload.userId,
+        eventKey: ["schedule_assignment", "oneoff", savedPayload.userId, savedPayload.id, savedPayload.updatedAt].join(":"),
         type: "schedule",
-        title: `Schedule Added - ${payload.title}`,
-        body: `${displayDate(payload.date)} | ${payload.start} - ${payload.end}`
+        title: `Schedule Added - ${savedPayload.title}`,
+        body: `${displayDate(savedPayload.date)} | ${savedPayload.start} - ${savedPayload.end}`
       })
     }
     setOneOffEditId("")
@@ -6629,12 +7134,20 @@ function ScheduleTab({ activeUser, currentUser, teamUsers = [], recurringWeeklyS
     setAssignmentOpen(true)
     setView("team")
   }
-  const removeOneOff = (id) => {
+  const removeOneOff = async (id) => {
     if (!canManageSchedule || !canDelete) { denyAccess(); return }
+    setPlannerSaveError("")
+    setPlannerSaving(true)
+    const result = onDeleteOneOffRecord ? await onDeleteOneOffRecord(id) : { ok:true }
+    setPlannerSaving(false)
+    if (!result?.ok) {
+      setPlannerSaveError(readPlannerSaveError(result?.error))
+      return
+    }
     setOneOffScheduleBlocks(prev=>prev.filter(x=>x.id!==id))
   }
 
-  const saveTask = () => {
+  const saveTask = async () => {
     if (!canManageTasks) { denyAccess(); return }
     if (!taskForm.title.trim() || !taskForm.assignedUserId || !taskForm.dueDate) return
     const editingTask = taskEditId ? tasks.find(x=>x.id===taskEditId) : null
@@ -6656,14 +7169,23 @@ function ScheduleTab({ activeUser, currentUser, teamUsers = [], recurringWeeklyS
       assignedById: currentUser?.id || "",
       assignedByName: currentUser?.name || ""
     }
-    setTasks(prev=> taskEditId ? prev.map(x=>x.id===taskEditId ? payload : x) : [payload, ...prev])
+    setPlannerSaveError("")
+    setPlannerSaving(true)
+    const result = onSaveTaskRecord ? await onSaveTaskRecord(payload) : { ok:true, data:payload }
+    setPlannerSaving(false)
+    if (!result?.ok) {
+      setPlannerSaveError(readPlannerSaveError(result?.error))
+      return
+    }
+    const savedPayload = result.data || payload
+    setTasks(prev=> taskEditId ? prev.map(x=>x.id===taskEditId ? savedPayload : x) : [savedPayload, ...prev])
     if (onImmediateOneTimeAlert) {
       onImmediateOneTimeAlert({
-        userId: payload.assignedUserId,
-        eventKey: ["task_assignment", payload.assignedUserId, payload.id, payload.assignmentUpdatedAt].join(":"),
+        userId: savedPayload.assignedUserId,
+        eventKey: ["task_assignment", savedPayload.assignedUserId, savedPayload.id, savedPayload.assignmentUpdatedAt].join(":"),
         type: "task",
-        title: `${taskEditId && assignmentChanged ? "Task Reassigned" : "Task Assigned"} - ${payload.title}`,
-        body: `${payload.assignedByName ? `Assigned by ${payload.assignedByName}. ` : ""}Due ${displayDate(payload.dueDate)}${payload.dueTime ? ` at ${displayTimeValue(payload.dueTime)}` : ""}${payload.priority ? ` | ${payload.priority}` : ""}${payload.detail ? ` | ${payload.detail}` : ""}`
+        title: `${taskEditId && assignmentChanged ? "Task Reassigned" : "Task Assigned"} - ${savedPayload.title}`,
+        body: `${savedPayload.assignedByName ? `Assigned by ${savedPayload.assignedByName}. ` : ""}Due ${displayDate(savedPayload.dueDate)}${savedPayload.dueTime ? ` at ${displayTimeValue(savedPayload.dueTime)}` : ""}${savedPayload.priority ? ` | ${savedPayload.priority}` : ""}${savedPayload.detail ? ` | ${savedPayload.detail}` : ""}`
       })
     }
     setTaskEditId("")
@@ -6692,8 +7214,16 @@ function ScheduleTab({ activeUser, currentUser, teamUsers = [], recurringWeeklyS
     setAssignmentOpen(true)
     setView("tasks")
   }
-  const removeTask = (id) => {
+  const removeTask = async (id) => {
     if (!canDelete) { denyAccess(); return }
+    setPlannerSaveError("")
+    setPlannerSaving(true)
+    const result = onDeleteTaskRecord ? await onDeleteTaskRecord(id) : { ok:true }
+    setPlannerSaving(false)
+    if (!result?.ok) {
+      setPlannerSaveError(readPlannerSaveError(result?.error))
+      return
+    }
     setTasks(prev=>prev.filter(x=>x.id!==id))
   }
   const resetAssignmentEditor = (type="oneoff") => {
@@ -6718,7 +7248,7 @@ function ScheduleTab({ activeUser, currentUser, teamUsers = [], recurringWeeklyS
       days:[todayDay]
     })
   }
-  const saveAssignment = () => {
+  const saveAssignment = async () => {
     if (!canManageSchedule) { denyAccess(); return }
     if (!assignmentForm.userId) return
     if (assignmentForm.type==="recurring") {
@@ -6733,9 +7263,30 @@ function ScheduleTab({ activeUser, currentUser, teamUsers = [], recurringWeeklyS
             ...recurringWeeklySchedule,
             ...targetDays.map(day=>({ id:uid(), userId:assignmentForm.userId, day, start:assignmentForm.start, end:assignmentForm.end, note:(assignmentForm.title || assignmentForm.notes).trim(), repeatRule:assignmentForm.repeatRule || "Weekly", endDate:assignmentForm.endDate || "", createdBy:currentUser?.id || "", createdAt:assignmentStamp, updatedAt:assignmentStamp }))
           ]
-      setRecurringWeeklySchedule(nextRows)
+      const changedRows = recurringEditId
+        ? nextRows.filter(row => row.id===recurringEditId)
+        : nextRows.filter(row => row.updatedAt===assignmentStamp && row.userId===assignmentForm.userId)
+      setPlannerSaveError("")
+      setPlannerSaving(true)
+      const savedRows = []
+      for (const row of changedRows) {
+        const result = onSaveRecurringRecord ? await onSaveRecurringRecord(row) : { ok:true, data:row }
+        if (!result?.ok) {
+          setPlannerSaving(false)
+          setPlannerSaveError(readPlannerSaveError(result?.error))
+          return
+        }
+        savedRows.push(result.data || row)
+      }
+      setPlannerSaving(false)
+      setRecurringWeeklySchedule(recurringEditId
+        ? nextRows.map(row => row.id!==recurringEditId ? row : (savedRows[0] || row))
+        : [
+            ...recurringWeeklySchedule,
+            ...savedRows
+          ])
       if (onImmediateOneTimeAlert) {
-        const notifyRows = recurringEditId ? nextRows.filter(row=>row.id===recurringEditId) : nextRows.filter(row=>row.updatedAt===assignmentStamp && row.userId===assignmentForm.userId)
+        const notifyRows = savedRows
         notifyRows.forEach(row => {
           onImmediateOneTimeAlert({
             userId: row.userId,
@@ -6753,14 +7304,23 @@ function ScheduleTab({ activeUser, currentUser, teamUsers = [], recurringWeeklyS
     if (assignmentForm.type==="oneoff") {
       if (!assignmentForm.date || !assignmentForm.start || !assignmentForm.end || !assignmentForm.title.trim()) return
       const payload = { id: oneOffEditId || uid(), userId: assignmentForm.userId, date: assignmentForm.date, start: assignmentForm.start, end: assignmentForm.end, title: assignmentForm.title.trim(), detail: assignmentForm.notes.trim(), type: assignmentForm.oneOffMode || "supplement", createdBy: currentUser?.id || "", createdAt: oneOffEditId ? (oneOffScheduleBlocks.find(x=>x.id===oneOffEditId)?.createdAt || now()) : now(), updatedAt: now() }
-      setOneOffScheduleBlocks(prev=> oneOffEditId ? prev.map(x=>x.id===oneOffEditId ? payload : x) : [...prev, payload])
+      setPlannerSaveError("")
+      setPlannerSaving(true)
+      const result = onSaveOneOffRecord ? await onSaveOneOffRecord(payload) : { ok:true, data:payload }
+      setPlannerSaving(false)
+      if (!result?.ok) {
+        setPlannerSaveError(readPlannerSaveError(result?.error))
+        return
+      }
+      const savedPayload = result.data || payload
+      setOneOffScheduleBlocks(prev=> oneOffEditId ? prev.map(x=>x.id===oneOffEditId ? savedPayload : x) : [...prev, savedPayload])
       if (onImmediateOneTimeAlert) {
         onImmediateOneTimeAlert({
-          userId: payload.userId,
-          eventKey: ["schedule_assignment", "oneoff", payload.userId, payload.id, payload.updatedAt].join(":"),
+          userId: savedPayload.userId,
+          eventKey: ["schedule_assignment", "oneoff", savedPayload.userId, savedPayload.id, savedPayload.updatedAt].join(":"),
           type: "schedule",
-          title: `Schedule Added - ${payload.title}`,
-          body: `${displayDate(payload.date)} | ${payload.start} - ${payload.end}`
+          title: `Schedule Added - ${savedPayload.title}`,
+          body: `${displayDate(savedPayload.date)} | ${savedPayload.start} - ${savedPayload.end}`
         })
       }
       setAssignmentOpen(false)
@@ -6771,28 +7331,46 @@ function ScheduleTab({ activeUser, currentUser, teamUsers = [], recurringWeeklyS
     const editingTask = taskEditId ? tasks.find(x=>x.id===taskEditId) : null
     const assignmentChanged = !editingTask || editingTask.assignedUserId!==assignmentForm.userId
     const payload = { id: taskEditId || uid(), title: assignmentForm.title.trim(), detail: assignmentForm.notes.trim(), assignedUserId: assignmentForm.userId, propertyId:"", clientId:"", dueDate: assignmentForm.dueDate, dueTime: assignmentForm.dueTime || "", priority: assignmentForm.priority || "Normal", status: assignmentForm.status || "To Do", createdAt: taskEditId ? (tasks.find(x=>x.id===taskEditId)?.createdAt || now()) : now(), updatedAt: now(), assignmentUpdatedAt: assignmentChanged ? now() : (editingTask?.assignmentUpdatedAt || editingTask?.createdAt || now()), assignedById: currentUser?.id || "", assignedByName: currentUser?.name || "" }
-    setTasks(prev=> taskEditId ? prev.map(x=>x.id===taskEditId ? payload : x) : [payload, ...prev])
+    setPlannerSaveError("")
+    setPlannerSaving(true)
+    const result = onSaveTaskRecord ? await onSaveTaskRecord(payload) : { ok:true, data:payload }
+    setPlannerSaving(false)
+    if (!result?.ok) {
+      setPlannerSaveError(readPlannerSaveError(result?.error))
+      return
+    }
+    const savedPayload = result.data || payload
+    setTasks(prev=> taskEditId ? prev.map(x=>x.id===taskEditId ? savedPayload : x) : [savedPayload, ...prev])
     if (onImmediateOneTimeAlert) {
       onImmediateOneTimeAlert({
-        userId: payload.assignedUserId,
-        eventKey: ["task_assignment", payload.assignedUserId, payload.id, payload.assignmentUpdatedAt].join(":"),
+        userId: savedPayload.assignedUserId,
+        eventKey: ["task_assignment", savedPayload.assignedUserId, savedPayload.id, savedPayload.assignmentUpdatedAt].join(":"),
         type: "task",
-        title: `${taskEditId && assignmentChanged ? "Task Reassigned" : "Task Assigned"} - ${payload.title}`,
-        body: `${payload.assignedByName ? `Assigned by ${payload.assignedByName}. ` : ""}Due ${displayDate(payload.dueDate)}${payload.dueTime ? ` at ${displayTimeValue(payload.dueTime)}` : ""}${payload.priority ? ` | ${payload.priority}` : ""}${payload.detail ? ` | ${payload.detail}` : ""}`
+        title: `${taskEditId && assignmentChanged ? "Task Reassigned" : "Task Assigned"} - ${savedPayload.title}`,
+        body: `${savedPayload.assignedByName ? `Assigned by ${savedPayload.assignedByName}. ` : ""}Due ${displayDate(savedPayload.dueDate)}${savedPayload.dueTime ? ` at ${displayTimeValue(savedPayload.dueTime)}` : ""}${savedPayload.priority ? ` | ${savedPayload.priority}` : ""}${savedPayload.detail ? ` | ${savedPayload.detail}` : ""}`
       })
     }
     setAssignmentOpen(false)
     resetAssignmentEditor("task")
   }
   const canUpdateTaskStatus = (task) => canEdit || task.assignedUserId===currentUser?.id
-  const updateTaskStatus = (id, status) => {
+  const updateTaskStatus = async (id, status) => {
     const target = tasks.find(t=>t.id===id)
     if (!target || !canUpdateTaskStatus(target)) return
-    setTasks(prev=>prev.map(t=>t.id!==id ? t : { ...t, status }))
+    const payload = { ...target, status, updatedAt: now() }
+    setPlannerSaveError("")
+    setPlannerSaving(true)
+    const result = onSaveTaskRecord ? await onSaveTaskRecord(payload) : { ok:true, data:payload }
+    setPlannerSaving(false)
+    if (!result?.ok) {
+      setPlannerSaveError(readPlannerSaveError(result?.error))
+      return
+    }
+    const savedPayload = result.data || payload
+    setTasks(prev=>prev.map(t=>t.id!==id ? t : savedPayload))
   }
 
-  const filteredTasks = [...tasks]
-    .map(t=>({ ...t, status:t.status || "To Do", priority:t.priority || "Normal" }))
+  const filteredTasks = [...enrichedTasks]
     .filter(t=>taskUserFilter==="All" || t.assignedUserId===taskUserFilter)
     .filter(t=>taskStatusFilter==="All" || t.status===taskStatusFilter)
     .filter(t=>taskPriorityFilter==="All" || t.priority===taskPriorityFilter)
@@ -6968,8 +7546,9 @@ function ScheduleTab({ activeUser, currentUser, teamUsers = [], recurringWeeklyS
     const linkedClient = clients.find(c=>c.id===task.clientId)
     const statusColor = task.status==="Done" ? plannerTheme.success : task.status==="In Progress" ? plannerTheme.warning : plannerTheme.accent
     const priorityColor = task.priority==="Urgent" ? plannerTheme.danger : task.priority==="High" ? "#FB923C" : task.priority==="Low" ? "#94A3B8" : plannerTheme.accent
+    const overdueColor = "#FB7185"
     return (
-      <div key={task.id} style={plannerPersonCardStyle}>
+      <div key={task.id} style={{...plannerPersonCardStyle,border:task.isOverdue ? "1px solid rgba(251,113,133,0.34)" : plannerPersonCardStyle.border,boxShadow:task.isOverdue ? "0 14px 30px rgba(127,29,29,0.22)" : plannerTheme.shadow}}>
         <div style={{display:"flex",flexDirection:"column",gap:12}}>
           <div style={{minWidth:0}}>
             <div style={{fontSize:16,fontWeight:800,color:"#F8FBFF",lineHeight:1.3,wordBreak:"break-word",overflowWrap:"anywhere"}}>{task.title}</div>
@@ -6977,8 +7556,10 @@ function ScheduleTab({ activeUser, currentUser, teamUsers = [], recurringWeeklyS
               {(assigned?.name || "Unassigned") + " · Due " + formatDateLong(task.dueDate)}{task.dueTime ? ` ${displayTimeValue(task.dueTime)}` : ""}
             </div>
           </div>
+          {task.isOverdue ? <div style={{padding:"9px 10px",borderRadius:12,border:"1px solid rgba(251,113,133,0.28)",background:"rgba(127,29,29,0.18)",color:"#FECDD3",fontSize:12,fontWeight:700,lineHeight:1.5}}>{task.overdueLabel || "Overdue"}</div> : null}
           {task.detail ? <div style={{fontSize:12,color:plannerTheme.text,lineHeight:1.6,wordBreak:"break-word",overflowWrap:"anywhere"}}>{task.detail}</div> : null}
           <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+            {task.isOverdue ? <span style={{...plannerPillStyle,color:overdueColor,border:`1px solid ${overdueColor}66`,background:`${overdueColor}14`}}>Overdue</span> : null}
             <span style={{...plannerPillStyle,color:priorityColor,border:`1px solid ${priorityColor}66`,background:`${priorityColor}12`}}>{task.priority}</span>
             <span style={{...plannerPillStyle,color:statusColor,border:`1px solid ${statusColor}66`,background:`${statusColor}12`}}>{task.status}</span>
             {linkedProp && <span style={plannerPillStyle}>{`Job · ${linkedProp.address}`}</span>}
@@ -7051,6 +7632,12 @@ function ScheduleTab({ activeUser, currentUser, teamUsers = [], recurringWeeklyS
           ))}
         </div>
 
+        {plannerSaveError ? (
+          <div style={{marginTop:12,padding:"12px 14px",borderRadius:14,border:"1px solid rgba(248,113,113,0.28)",background:"linear-gradient(180deg, rgba(127,29,29,0.26) 0%, rgba(69,10,10,0.18) 100%)",color:"#FECACA",fontSize:12,lineHeight:1.5}}>
+            {plannerSaveError}
+          </div>
+        ) : null}
+
         {assignmentOpen ? (
           <div style={{...plannerPanelStyle,marginTop:12}}>
             <div style={{marginBottom:14}}>
@@ -7102,8 +7689,8 @@ function ScheduleTab({ activeUser, currentUser, teamUsers = [], recurringWeeklyS
                 </div>
               ) : null}
               <div style={{display:"flex",gap:8,flexWrap:"wrap",justifyContent:isMobile?"stretch":"flex-end"}}>
-                <button onClick={()=>{setAssignmentOpen(false);resetAssignmentEditor(assignmentForm.type)}} style={{...plannerActionButtonStyle(),flex:isMobile?"1 1 0":"0 0 auto"}}>Cancel</button>
-                <button onClick={saveAssignment} style={{...plannerActionButtonStyle("primary"),flex:isMobile?"1 1 0":"0 0 auto"}}>{recurringEditId || oneOffEditId || taskEditId ? "Save Assignment" : "Create Assignment"}</button>
+                <button onClick={()=>{setAssignmentOpen(false);resetAssignmentEditor(assignmentForm.type)}} style={{...plannerActionButtonStyle(),flex:isMobile?"1 1 0":"0 0 auto",opacity:plannerSaving ? 0.72 : 1}} disabled={plannerSaving}>{plannerSaving ? "Saving..." : "Cancel"}</button>
+                <button onClick={saveAssignment} style={{...plannerActionButtonStyle("primary"),flex:isMobile?"1 1 0":"0 0 auto",opacity:plannerSaving ? 0.82 : 1}} disabled={plannerSaving}>{plannerSaving ? "Saving..." : (recurringEditId || oneOffEditId || taskEditId ? "Save Assignment" : "Create Assignment")}</button>
               </div>
             </div>
           </div>
@@ -7149,11 +7736,11 @@ function ScheduleTab({ activeUser, currentUser, teamUsers = [], recurringWeeklyS
                 <div>
                   <div style={plannerEyebrowStyle}>My Tasks</div>
                   <div style={{fontSize:isMobile ? 20 : 22,fontWeight:800,color:"#F8FBFF",lineHeight:1.1}}>Open Work</div>
-                  <div style={{fontSize:12,color:plannerTheme.muted,marginTop:5,lineHeight:1.45}}>Tasks due today and the next items coming up.</div>
+                  <div style={{fontSize:12,color:plannerTheme.muted,marginTop:5,lineHeight:1.45}}>Overdue work first, then what is due today and this week.</div>
                 </div>
-                <div style={plannerPillStyle}>{mineUpcomingTasks.length} open</div>
+                <div style={plannerPillStyle}>{mineOpenWork.length} open</div>
               </div>
-              {mineUpcomingTasks.length===0 ? <div style={plannerEmptyStyle}>No open tasks assigned to you.</div> : <div style={{display:"flex",flexDirection:"column",gap:10}}>{mineUpcomingTasks.map(renderTaskCard)}</div>}
+              {mineOpenWork.length===0 ? <div style={plannerEmptyStyle}>No open tasks assigned to you for today or this week.</div> : <div style={{display:"flex",flexDirection:"column",gap:10}}>{mineOpenWork.map(renderTaskCard)}</div>}
             </div>
           </div>
         </>

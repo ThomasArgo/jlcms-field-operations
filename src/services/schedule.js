@@ -31,7 +31,7 @@ export async function updateRecurringWeeklySchedule(id, updates) {
   const { data, error } = await client
     .from(recurringTable)
     .update(updates)
-    .eq("id", id)
+    .eq("legacy_schedule_id", id)
     .select()
     .single();
 
@@ -41,7 +41,7 @@ export async function updateRecurringWeeklySchedule(id, updates) {
 
 export async function deleteRecurringWeeklySchedule(id) {
   const client = supabase || requireSupabase();
-  const { error } = await client.from(recurringTable).delete().eq("id", id);
+  const { error } = await client.from(recurringTable).delete().eq("legacy_schedule_id", id);
 
   if (error) throw error;
   return true;
@@ -75,7 +75,7 @@ export async function updateOneOffScheduleBlock(id, updates) {
   const { data, error } = await client
     .from(oneOffTable)
     .update(updates)
-    .eq("id", id)
+    .eq("legacy_block_id", id)
     .select()
     .single();
 
@@ -85,7 +85,7 @@ export async function updateOneOffScheduleBlock(id, updates) {
 
 export async function deleteOneOffScheduleBlock(id) {
   const client = supabase || requireSupabase();
-  const { error } = await client.from(oneOffTable).delete().eq("id", id);
+  const { error } = await client.from(oneOffTable).delete().eq("legacy_block_id", id);
 
   if (error) throw error;
   return true;

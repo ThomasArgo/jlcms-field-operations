@@ -30,7 +30,7 @@ export async function updateTask(id, updates) {
   const { data, error } = await client
     .from(TABLE)
     .update(updates)
-    .eq("id", id)
+    .eq("legacy_task_id", id)
     .select()
     .single();
 
@@ -40,7 +40,7 @@ export async function updateTask(id, updates) {
 
 export async function deleteTask(id) {
   const client = supabase || requireSupabase();
-  const { error } = await client.from(TABLE).delete().eq("id", id);
+  const { error } = await client.from(TABLE).delete().eq("legacy_task_id", id);
 
   if (error) throw error;
   return true;
