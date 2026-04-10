@@ -252,7 +252,7 @@ const HCG_COMPANY_NAME = "HCG Management LLC"
 const HCG_WORKSPACE_NAME = "HCG Management LLC / Honesty Construction Group"
 const DEFAULT_COMPANY_SETTINGS = {
   companyAddress:"1234 Example Rd, Houston, TX 77001",
-  billingContactName:"Greg Holloway",
+  billingContactName:"Greg Williams",
   billingContactEmail:"billing@hcgmanagement.com",
   billingContactPhone:"713-555-0199",
   paymentTerms:"Net 15",
