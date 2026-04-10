@@ -2129,6 +2129,7 @@ const toSupabaseTaskPayload = (task, teamId, userSupabaseIdByLegacyId = {}, clie
 
 const fromSupabaseRecurringSchedulePayload = (entry = {}, userLegacyIdByDbId = {}) => {
   const record = entry?.record && typeof entry.record === "object" ? entry.record : {}
+  const fallbackText = String(entry.note || record.note || "").trim()
   return {
     ...record,
     id: String(entry.legacy_schedule_id || record.id || entry.id || "").trim() || uid(),
@@ -2137,7 +2138,9 @@ const fromSupabaseRecurringSchedulePayload = (entry = {}, userLegacyIdByDbId = {
     day: String(entry.day || record.day || "").trim(),
     start: String(entry.start_time || record.start || "").trim(),
     end: String(entry.end_time || record.end || "").trim(),
-    note: String(entry.note || record.note || "").trim(),
+    title: String(record.title || fallbackText || "Recurring Shift").trim(),
+    detail: String(record.detail || "").trim(),
+    note: fallbackText,
     repeatRule: String(record.repeatRule || "Weekly").trim() || "Weekly",
     endDate: String(record.endDate || "").trim(),
     createdBy: String(entry.created_by || record.createdBy || "").trim(),
@@ -2154,7 +2157,9 @@ const toSupabaseRecurringSchedulePayload = (entry, teamId, userSupabaseIdByLegac
     day: String(entry?.day || "").trim(),
     start: String(entry?.start || "").trim(),
     end: String(entry?.end || "").trim(),
-    note: String(entry?.note || "").trim(),
+    title: String(entry?.title || entry?.note || "").trim(),
+    detail: String(entry?.detail || "").trim(),
+    note: String(entry?.title || entry?.note || "").trim(),
     repeatRule: String(entry?.repeatRule || "Weekly").trim() || "Weekly",
     endDate: String(entry?.endDate || "").trim(),
     createdBy: String(entry?.createdBy || "").trim(),
@@ -3161,8 +3166,8 @@ export default function JLCMSApp() {
         ...e,
         start:e.start || "08:00 AM",
         end:e.end || "05:00 PM",
-        title:e.note || "Recurring Shift",
-        detail:e.note || ""
+        title:e.title || e.note || "Recurring Shift",
+        detail:e.detail || ""
       }))
 
     const scheduleBlocks = [...recurringToday, ...oneOffToday]
@@ -4268,7 +4273,9 @@ export default function JLCMSApp() {
         day: entry.day || "Mon",
         start: entry.start || "08:00 AM",
         end: entry.end || "05:00 PM",
-        note: entry.note || entry.label || "Regular Shift",
+        title: entry.title || entry.note || entry.label || "Regular Shift",
+        detail: entry.detail || "",
+        note: entry.note || entry.title || entry.label || "Regular Shift",
         createdBy: entry.createdBy || "",
         createdAt: entry.createdAt || now()
       }
@@ -4277,8 +4284,10 @@ export default function JLCMSApp() {
   }, [users, recurringWeeklySchedule])
 
   useEffect(() => {
-    closeTopPanel()
-  }, [tab, closeTopPanel])
+    window.clearTimeout(topPanelTimeoutRef.current)
+    setTopPanel("")
+    setTopPanelClosing(false)
+  }, [tab])
   useEffect(() => {
     if (!resetPasswordTarget) return
     const prev = document.body.style.overflow
@@ -6964,7 +6973,7 @@ function ScheduleTab({ activeUser, currentUser, teamUsers = [], recurringWeeklyS
   })
 
   const recurringRows = recurringWeeklySchedule
-    .map(entry=>({ ...entry, userName:userMap[entry.userId]?.name || "Team Member", start:entry.start || "08:00 AM", end:entry.end || "05:00 PM", note:entry.note || "" }))
+    .map(entry=>({ ...entry, userName:userMap[entry.userId]?.name || "Team Member", start:entry.start || "08:00 AM", end:entry.end || "05:00 PM", title:entry.title || entry.note || "Recurring Shift", detail:entry.detail || "", note:entry.note || entry.title || "" }))
     .filter(entry=>entry.userId)
     .sort((a,b)=>toMin(a.start)-toMin(b.start))
 
@@ -7027,7 +7036,7 @@ function ScheduleTab({ activeUser, currentUser, teamUsers = [], recurringWeeklyS
   const saveRecurring = async () => {
     if (!canManageRecurring) { denyAccess(); return }
     if (!recurringForm.userId || !recurringForm.day || !recurringForm.start || !recurringForm.end) return
-    const payload = { id: recurringEditId || uid(), userId: recurringForm.userId, day: recurringForm.day, start: recurringForm.start, end: recurringForm.end, note: recurringForm.note.trim(), createdBy: currentUser?.id || "", createdAt: recurringEditId ? (recurringWeeklySchedule.find(x=>x.id===recurringEditId)?.createdAt || now()) : now(), updatedAt: now() }
+    const payload = { id: recurringEditId || uid(), userId: recurringForm.userId, day: recurringForm.day, start: recurringForm.start, end: recurringForm.end, title: recurringForm.note.trim(), detail: "", note: recurringForm.note.trim(), createdBy: currentUser?.id || "", createdAt: recurringEditId ? (recurringWeeklySchedule.find(x=>x.id===recurringEditId)?.createdAt || now()) : now(), updatedAt: now() }
     setPlannerSaveError("")
     setPlannerSaving(true)
     const result = onSaveRecurringRecord ? await onSaveRecurringRecord(payload) : { ok:true, data:payload }
@@ -7044,7 +7053,7 @@ function ScheduleTab({ activeUser, currentUser, teamUsers = [], recurringWeeklyS
         eventKey: ["schedule_assignment", "recurring", savedPayload.userId, savedPayload.id, savedPayload.updatedAt].join(":"),
         type: "schedule",
         title: `Recurring Schedule Added - ${savedPayload.day}`,
-        body: `${savedPayload.start} - ${savedPayload.end}${savedPayload.note ? ` | ${savedPayload.note}` : ""}`
+        body: `${savedPayload.start} - ${savedPayload.end}${savedPayload.title ? ` | ${savedPayload.title}` : ""}`
       })
     }
     setRecurringEditId("")
@@ -7052,12 +7061,12 @@ function ScheduleTab({ activeUser, currentUser, teamUsers = [], recurringWeeklyS
   }
   const editRecurring = (entry) => {
     setRecurringEditId(entry.id)
-    setRecurringForm({ userId: entry.userId || "", day: entry.day || "Mon", start: entry.start || "08:00 AM", end: entry.end || "05:00 PM", note: entry.note || "" })
+    setRecurringForm({ userId: entry.userId || "", day: entry.day || "Mon", start: entry.start || "08:00 AM", end: entry.end || "05:00 PM", note: entry.title || entry.note || "" })
     setAssignmentForm({
       type:"recurring",
       userId: entry.userId || "",
-      title: entry.note || "",
-      notes: entry.note || "",
+      title: entry.title || entry.note || "",
+      notes: entry.detail || "",
       date:todayDate,
       start: entry.start || "08:00 AM",
       end: entry.end || "05:00 PM",
@@ -7258,10 +7267,10 @@ function ScheduleTab({ activeUser, currentUser, teamUsers = [], recurringWeeklyS
       const assignmentStamp = now()
       const targetDays = recurringEditId ? [assignmentForm.days[0] || todayDay] : days
       const nextRows = recurringEditId
-        ? recurringWeeklySchedule.map(row=>row.id!==recurringEditId ? row : { ...row, userId:assignmentForm.userId, day:targetDays[0], start:assignmentForm.start, end:assignmentForm.end, note:(assignmentForm.title || assignmentForm.notes).trim(), repeatRule:assignmentForm.repeatRule || "Weekly", endDate:assignmentForm.endDate || "", updatedAt:assignmentStamp })
+        ? recurringWeeklySchedule.map(row=>row.id!==recurringEditId ? row : { ...row, userId:assignmentForm.userId, day:targetDays[0], start:assignmentForm.start, end:assignmentForm.end, title:assignmentForm.title.trim(), detail:assignmentForm.notes.trim(), note:assignmentForm.title.trim(), repeatRule:assignmentForm.repeatRule || "Weekly", endDate:assignmentForm.endDate || "", updatedAt:assignmentStamp })
         : [
             ...recurringWeeklySchedule,
-            ...targetDays.map(day=>({ id:uid(), userId:assignmentForm.userId, day, start:assignmentForm.start, end:assignmentForm.end, note:(assignmentForm.title || assignmentForm.notes).trim(), repeatRule:assignmentForm.repeatRule || "Weekly", endDate:assignmentForm.endDate || "", createdBy:currentUser?.id || "", createdAt:assignmentStamp, updatedAt:assignmentStamp }))
+            ...targetDays.map(day=>({ id:uid(), userId:assignmentForm.userId, day, start:assignmentForm.start, end:assignmentForm.end, title:assignmentForm.title.trim(), detail:assignmentForm.notes.trim(), note:assignmentForm.title.trim(), repeatRule:assignmentForm.repeatRule || "Weekly", endDate:assignmentForm.endDate || "", createdBy:currentUser?.id || "", createdAt:assignmentStamp, updatedAt:assignmentStamp }))
           ]
       const changedRows = recurringEditId
         ? nextRows.filter(row => row.id===recurringEditId)
@@ -7293,7 +7302,7 @@ function ScheduleTab({ activeUser, currentUser, teamUsers = [], recurringWeeklyS
             eventKey: ["schedule_assignment", "recurring", row.userId, row.id, row.updatedAt || assignmentStamp].join(":"),
             type: "schedule",
             title: `Recurring Schedule Added - ${row.day}`,
-            body: `${row.start} - ${row.end}${row.note ? ` | ${row.note}` : ""}`
+            body: `${row.start} - ${row.end}${row.title ? ` | ${row.title}` : ""}${row.detail ? ` | ${row.detail}` : ""}`
           })
         })
       }
@@ -7729,7 +7738,7 @@ function ScheduleTab({ activeUser, currentUser, teamUsers = [], recurringWeeklyS
                 </div>
                 <div style={plannerPillStyle}>{mineToday.blocks.length} blocks</div>
               </div>
-              {mineToday.blocks.length===0 ? <div style={plannerEmptyStyle}>No schedule items assigned for today.</div> : <div style={{display:"flex",flexDirection:"column",gap:10}}>{mineToday.blocks.map(block=>renderScheduleItem(block,{ key:`mine-block-${block.id}`, title:block.title || "Shift", subtitle:block.detail || "", accentColor:block.source==="oneoff" ? plannerTheme.success : plannerTheme.accent, badgeLabel:block.source==="oneoff" ? "One-Off" : "Recurring", onEdit:block.source==="oneoff" && canManageSchedule && canEdit ? ()=>editOneOff(block) : null, onDelete:block.source==="oneoff" && canManageSchedule && canDelete ? ()=>removeOneOff(block.id) : null }))}</div>}
+              {mineToday.blocks.length===0 ? <div style={plannerEmptyStyle}>No schedule items assigned for today.</div> : <div style={{display:"flex",flexDirection:"column",gap:10}}>{mineToday.blocks.map(block=>renderScheduleItem(block,{ key:`mine-block-${block.id}`, title:block.title || block.note || "Shift", subtitle:block.detail || "", accentColor:block.source==="oneoff" ? plannerTheme.success : plannerTheme.accent, badgeLabel:block.source==="oneoff" ? "One-Off" : "Recurring", onEdit:block.source==="oneoff" && canManageSchedule && canEdit ? ()=>editOneOff(block) : null, onDelete:block.source==="oneoff" && canManageSchedule && canDelete ? ()=>removeOneOff(block.id) : null }))}</div>}
             </div>
             <div style={plannerPersonCardStyle}>
               <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:12,marginBottom:12}}>
@@ -7768,7 +7777,7 @@ function ScheduleTab({ activeUser, currentUser, teamUsers = [], recurringWeeklyS
                     <div style={{display:"flex",flexDirection:"column",gap:14}}>
                       <div>
                         <div style={{...plannerEyebrowStyle,fontSize:10,marginBottom:8}}>Schedule</div>
-                        {row.blocks.length===0 ? <div style={plannerEmptyStyle}>No schedule blocks</div> : <div style={{display:"flex",flexDirection:"column",gap:10}}>{row.blocks.map(block=>renderScheduleItem(block,{ key:`today-block-${block.id}`, title:block.title || "Shift", subtitle:block.detail || "", accentColor:block.source==="oneoff" ? plannerTheme.success : plannerTheme.accent, badgeLabel:block.source==="oneoff" ? "One-Off" : "Recurring", onEdit:block.source==="oneoff" && canManageSchedule && canEdit ? ()=>editOneOff(block) : null, onDelete:block.source==="oneoff" && canManageSchedule && canDelete ? ()=>removeOneOff(block.id) : null }))}</div>}
+                        {row.blocks.length===0 ? <div style={plannerEmptyStyle}>No schedule blocks</div> : <div style={{display:"flex",flexDirection:"column",gap:10}}>{row.blocks.map(block=>renderScheduleItem(block,{ key:`today-block-${block.id}`, title:block.title || block.note || "Shift", subtitle:block.detail || "", accentColor:block.source==="oneoff" ? plannerTheme.success : plannerTheme.accent, badgeLabel:block.source==="oneoff" ? "One-Off" : "Recurring", onEdit:block.source==="oneoff" && canManageSchedule && canEdit ? ()=>editOneOff(block) : null, onDelete:block.source==="oneoff" && canManageSchedule && canDelete ? ()=>removeOneOff(block.id) : null }))}</div>}
                       </div>
                       <div>
                         <div style={{...plannerEyebrowStyle,fontSize:10,color:"#A7F3D0",marginBottom:8}}>Due Tasks</div>
@@ -7791,7 +7800,7 @@ function ScheduleTab({ activeUser, currentUser, teamUsers = [], recurringWeeklyS
             <div style={plannerSubheadingStyle}>Grouped by person inside each day so the team can scan assignments fast.</div>
           </div>
           <div style={{display:"grid",gridTemplateColumns:isMobile?"1fr":"repeat(2,minmax(0,1fr))",gap:12}}>
-            {weekRows.map(day=><div key={day.day} style={plannerDayCardStyle}><div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:12,marginBottom:12}}><div><div style={{fontSize:18,fontWeight:800,color:"#F8FBFF"}}>{day.day}</div><div style={{fontSize:12,color:plannerTheme.muted,marginTop:3}}>{day.label}</div></div><div style={plannerPillStyle}>{day.people.reduce((sum, person)=>sum + person.items.length, 0)} items</div></div>{day.people.length===0 ? <div style={plannerEmptyStyle}>No schedule blocks</div> : <div style={{display:"flex",flexDirection:"column",gap:10}}>{day.people.map(group=>renderPersonGroup(group, block=>renderScheduleItem(block,{ key:`week-${day.day}-${block.id}`, title:block.title || "Shift", subtitle:block.detail || "", accentColor:block.source==="oneoff" ? plannerTheme.success : plannerTheme.accent, badgeLabel:block.source==="oneoff" ? "One-Off" : "Recurring", onEdit:block.source==="oneoff" && canManageSchedule && canEdit ? ()=>editOneOff(block) : null, onDelete:block.source==="oneoff" && canManageSchedule && canDelete ? ()=>removeOneOff(block.id) : null }), `week-group-${day.day}-${group.userId}`))}</div>}</div>)}
+            {weekRows.map(day=><div key={day.day} style={plannerDayCardStyle}><div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:12,marginBottom:12}}><div><div style={{fontSize:18,fontWeight:800,color:"#F8FBFF"}}>{day.day}</div><div style={{fontSize:12,color:plannerTheme.muted,marginTop:3}}>{day.label}</div></div><div style={plannerPillStyle}>{day.people.reduce((sum, person)=>sum + person.items.length, 0)} items</div></div>{day.people.length===0 ? <div style={plannerEmptyStyle}>No schedule blocks</div> : <div style={{display:"flex",flexDirection:"column",gap:10}}>{day.people.map(group=>renderPersonGroup(group, block=>renderScheduleItem(block,{ key:`week-${day.day}-${block.id}`, title:block.title || block.note || "Shift", subtitle:block.detail || "", accentColor:block.source==="oneoff" ? plannerTheme.success : plannerTheme.accent, badgeLabel:block.source==="oneoff" ? "One-Off" : "Recurring", onEdit:block.source==="oneoff" && canManageSchedule && canEdit ? ()=>editOneOff(block) : null, onDelete:block.source==="oneoff" && canManageSchedule && canDelete ? ()=>removeOneOff(block.id) : null }), `week-group-${day.day}-${group.userId}`))}</div>}</div>)}
           </div>
         </div>
       )}
@@ -7878,7 +7887,7 @@ function ScheduleTab({ activeUser, currentUser, teamUsers = [], recurringWeeklyS
               <div style={plannerHeadingStyle}>Recurring Schedule by Person</div>
               <div style={plannerSubheadingStyle}>Daily sections are grouped by person, sorted by time, and built from the existing schedule data in the UI layer.</div>
             </div>
-            {recurringRows.length===0 ? <div style={plannerEmptyStyle}>No recurring schedule entries yet.</div> : <div style={{display:"grid",gridTemplateColumns:isMobile?"1fr":"repeat(2,minmax(0,1fr))",gap:12}}>{recurringDayGroups.map(day=><div key={day.day} style={plannerDayCardStyle}><div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:12,marginBottom:12}}><div><div style={{fontSize:18,fontWeight:800,color:"#F8FBFF"}}>{day.day}</div><div style={{fontSize:12,color:plannerTheme.muted,marginTop:3}}>{day.people.length} {day.people.length===1 ? "person" : "people"} scheduled</div></div><div style={plannerPillStyle}>{day.people.reduce((sum, person)=>sum + person.items.length, 0)} entries</div></div>{day.people.length===0 ? <div style={plannerEmptyStyle}>No recurring shifts</div> : <div style={{display:"flex",flexDirection:"column",gap:10}}>{day.people.map(group=>renderPersonGroup(group, entry=>renderScheduleItem(entry,{ key:`recurring-${day.day}-${entry.id}`, title:entry.note || "Recurring Shift", subtitle:`${entry.start} - ${entry.end}`, accentColor:plannerTheme.accent, badgeLabel:"Recurring", onEdit:canManageRecurring && canEdit ? ()=>editRecurring(entry) : null, onDelete:canManageRecurring && canDelete ? ()=>removeRecurring(entry.id) : null }), `recurring-group-${day.day}-${group.userId}`))}</div>}</div>)}</div>}
+            {recurringRows.length===0 ? <div style={plannerEmptyStyle}>No recurring schedule entries yet.</div> : <div style={{display:"grid",gridTemplateColumns:isMobile?"1fr":"repeat(2,minmax(0,1fr))",gap:12}}>{recurringDayGroups.map(day=><div key={day.day} style={plannerDayCardStyle}><div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:12,marginBottom:12}}><div><div style={{fontSize:18,fontWeight:800,color:"#F8FBFF"}}>{day.day}</div><div style={{fontSize:12,color:plannerTheme.muted,marginTop:3}}>{day.people.length} {day.people.length===1 ? "person" : "people"} scheduled</div></div><div style={plannerPillStyle}>{day.people.reduce((sum, person)=>sum + person.items.length, 0)} entries</div></div>{day.people.length===0 ? <div style={plannerEmptyStyle}>No recurring shifts</div> : <div style={{display:"flex",flexDirection:"column",gap:10}}>{day.people.map(group=>renderPersonGroup(group, entry=>renderScheduleItem(entry,{ key:`recurring-${day.day}-${entry.id}`, title:entry.title || entry.note || "Recurring Shift", subtitle:entry.detail || `${entry.start} - ${entry.end}`, accentColor:plannerTheme.accent, badgeLabel:"Recurring", onEdit:canManageRecurring && canEdit ? ()=>editRecurring(entry) : null, onDelete:canManageRecurring && canDelete ? ()=>removeRecurring(entry.id) : null }), `recurring-group-${day.day}-${group.userId}`))}</div>}</div>)}</div>}
           </div>
         </>
       )}
