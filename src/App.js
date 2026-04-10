@@ -79,6 +79,20 @@ const FontLink = () => (
     @keyframes pulseY { 0%,100%{box-shadow:0 0 0 0 rgba(251,191,36,0.4)} 50%{box-shadow:0 0 0 6px rgba(251,191,36,0)} }
     .slide-in { animation: slideIn 0.25s cubic-bezier(0.16,1,0.3,1); }
     @keyframes slideIn { from{transform:translateX(100%)} to{transform:translateX(0)} }
+    .top-panel-backdrop-in { animation: panelBackdropIn 0.2s ease forwards; }
+    .top-panel-backdrop-out { animation: panelBackdropOut 0.18s ease forwards; }
+    @keyframes panelBackdropIn { from{opacity:0} to{opacity:1} }
+    @keyframes panelBackdropOut { from{opacity:1} to{opacity:0} }
+    .top-panel-shell-in { animation: topPanelShellIn 0.22s cubic-bezier(0.16,1,0.3,1) forwards; transform-origin: top right; }
+    .top-panel-shell-out { animation: topPanelShellOut 0.18s ease forwards; transform-origin: top right; }
+    @keyframes topPanelShellIn {
+      from { opacity:0; transform:translateY(-10px) translateX(8px) scale(0.985); }
+      to { opacity:1; transform:translateY(0) translateX(0) scale(1); }
+    }
+    @keyframes topPanelShellOut {
+      from { opacity:1; transform:translateY(0) translateX(0) scale(1); }
+      to { opacity:0; transform:translateY(-8px) translateX(6px) scale(0.985); }
+    }
     .fade-up { animation: fadeUp 0.3s ease; }
     @keyframes fadeUp { from{opacity:0;transform:translateY(8px)} to{opacity:1;transform:translateY(0)} }
     .notif-in { animation: notifIn 0.35s cubic-bezier(0.16,1,0.3,1); }
@@ -2045,13 +2059,12 @@ export default function JLCMSApp() {
   const [inspectors,   setInspectors]   = useState([])
   const [selected,     setSelected]     = useState(null)
   const [tab,          setTab]          = useState("home")
-  const [showLegend,   setShowLegend]   = useState(false)
-  const [showQuickRef, setShowQuickRef] = useState(false)
+  const [topPanel,     setTopPanel]     = useState("")
+  const [topPanelClosing, setTopPanelClosing] = useState(false)
   const [addOpen,      setAddOpen]      = useState(false)
   const [newAddr,      setNewAddr]      = useState("")
   const [bulkOpen,     setBulkOpen]     = useState(false)
   const [activeUser,   setActiveUser]   = useState("")
-  const [notifPanel,   setNotifPanel]   = useState(false)
   const [notifications,setNotifications]= useState([])
   const [toasts,       setToasts]       = useState([])
   const [pushEnabled,  setPushEnabled]  = useState(false)
@@ -2083,10 +2096,14 @@ export default function JLCMSApp() {
   const notificationsRef = useRef([])
   const notificationLedgerRef = useRef({})
   const deliveredToastIdsRef = useRef(new Set())
+  const topPanelTimeoutRef = useRef(null)
   const propsLoadedRef = useRef(false)
   const workspaceLoadedRef = useRef(false)
   const workspaceTeamIdRef = useRef("")
   const syncedPropertyIdsRef = useRef([])
+  const notifPanel = topPanel==="alerts"
+  const showQuickRef = topPanel==="portals"
+  const showLegend = topPanel==="key"
 
   useEffect(() => {
     const timeoutId = window.setTimeout(() => {
@@ -2094,6 +2111,39 @@ export default function JLCMSApp() {
     }, SPLASH_MIN_DURATION_MS)
     return () => window.clearTimeout(timeoutId)
   }, [])
+
+  const closeTopPanel = useCallback(() => {
+    if (!topPanel) return
+    window.clearTimeout(topPanelTimeoutRef.current)
+    setTopPanelClosing(true)
+    topPanelTimeoutRef.current = window.setTimeout(() => {
+      setTopPanel("")
+      setTopPanelClosing(false)
+    }, 170)
+  }, [topPanel])
+
+  const toggleTopPanel = useCallback((panelKey) => {
+    const nextKey = String(panelKey || "").trim()
+    window.clearTimeout(topPanelTimeoutRef.current)
+    if (!nextKey) {
+      closeTopPanel()
+      return
+    }
+    if (topPanel===nextKey && !topPanelClosing) {
+      closeTopPanel()
+      return
+    }
+    if (!topPanel) {
+      setTopPanel(nextKey)
+      setTopPanelClosing(false)
+      return
+    }
+    setTopPanelClosing(true)
+    topPanelTimeoutRef.current = window.setTimeout(() => {
+      setTopPanel(nextKey)
+      setTopPanelClosing(false)
+    }, 150)
+  }, [closeTopPanel, topPanel, topPanelClosing])
 
   const persistUserRecord = useCallback(async (userRecord) => {
     const workspace = await getOrCreateWorkspaceTeam()
@@ -3782,10 +3832,8 @@ export default function JLCMSApp() {
   }, [users, recurringWeeklySchedule])
 
   useEffect(() => {
-    setNotifPanel(false)
-    setShowLegend(false)
-    setShowQuickRef(false)
-  }, [tab])
+    closeTopPanel()
+  }, [tab, closeTopPanel])
   useEffect(() => {
     if (!resetPasswordTarget) return
     const prev = document.body.style.overflow
@@ -3795,13 +3843,14 @@ export default function JLCMSApp() {
     }
   }, [resetPasswordTarget])
   useEffect(() => {
-    if (!notifPanel) return
+    if (!topPanel) return
     const prev = document.body.style.overflow
     document.body.style.overflow = "hidden"
     return () => {
       document.body.style.overflow = prev
     }
-  }, [notifPanel])
+  }, [topPanel])
+  useEffect(() => () => window.clearTimeout(topPanelTimeoutRef.current), [])
 
   if (!authLoaded || !splashReady) {
     return <SplashScreen />
@@ -3899,12 +3948,10 @@ export default function JLCMSApp() {
         {/* Notifications */}
         <button
           onClick={()=>{
-            setShowLegend(false)
-            setShowQuickRef(false)
-            setNotifPanel(v=>!v)
+            toggleTopPanel("alerts")
             markNotificationsReadForUser(activeUser, activeNotifications.map(notification => notification.id))
           }}
-          style={utilityButtonStyle}
+          style={topToolbarButtonStyle(notifPanel && !topPanelClosing)}
         >
           Alerts
           {unreadCount>0&&(
@@ -3929,11 +3976,9 @@ export default function JLCMSApp() {
 
         <button
           onClick={()=>{
-            setNotifPanel(false)
-            setShowLegend(false)
-            setShowQuickRef(v=>!v)
+            toggleTopPanel("portals")
           }}
-          style={utilityButtonStyle}
+          style={topToolbarButtonStyle(showQuickRef && !topPanelClosing)}
         >
           Portals
         </button>
@@ -3941,11 +3986,9 @@ export default function JLCMSApp() {
         {/* KEY */}
         <button
           onClick={()=>{
-            setNotifPanel(false)
-            setShowQuickRef(false)
-            setShowLegend(v=>!v)
+            toggleTopPanel("key")
           }}
-          style={utilityButtonStyle}
+          style={topToolbarButtonStyle(showLegend && !topPanelClosing)}
         >
           KEY
         </button>
@@ -3985,263 +4028,113 @@ export default function JLCMSApp() {
 
       {/* ---- NOTIFICATION PANEL ---- */}
       {notifPanel&&(
-        <>
-          <div
-            onClick={()=>setNotifPanel(false)}
-            style={{
-              position:"fixed",
-              inset:0,
-              background:"rgba(0,0,0,0.6)",
-              zIndex:199
-            }}
-          />
-          <div
-            className="slide-in"
-            style={{
-              position:"fixed",
-              top:52,
-              right:isMobile ? "5%" : 0,
-              width:isMobile ? "90%" : 380,
-              maxWidth:"100%",
-              height:isMobile ? "auto" : "calc(100vh - 52px)",
-              maxHeight:isMobile ? "80vh" : "100%",
-              background:"linear-gradient(180deg,#111B28 0%,#0C1520 100%)",
-              borderLeft:"2px solid #60A5FA",
-              borderRadius:isMobile ? 16 : 0,
-              boxShadow:"0 24px 52px rgba(0,0,0,0.48)",
-              zIndex:200,
-              display:"flex",
-              flexDirection:"column",
-              overflow:"hidden"
-            }}
-          >
-            <div style={{padding:"18px 20px",borderBottom:"1px solid rgba(148,163,184,0.12)",background:"linear-gradient(90deg,#122235 0%,#111B28 100%)",flexShrink:0}}>
-              <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:12}}>
-                <div>
-                  <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
-                    <div style={{fontFamily:"'Barlow Condensed',sans-serif",fontWeight:900,fontSize:22,color:"#60A5FA",letterSpacing:2}}>
-                      NOTIFICATIONS
-                    </div>
-                    <span style={{background:"#0C1117",border:"1px solid #334155",borderRadius:999,padding:"2px 8px",fontSize:11,color:"#DCE7F5",fontWeight:700}}>
-                      {unreadCount} unread
-                    </span>
-                  </div>
-                  <div style={{fontSize:11,color:"#6B7280",marginTop:4,fontFamily:"'IBM Plex Mono',monospace"}}>
-                    Showing alerts for {users.find(t=>t.id===activeUser)?.name || currentUser?.name || "Current User"}
-                  </div>
-                </div>
-                <button
-                  onClick={()=>setNotifPanel(false)}
-                  style={{...btnGray,fontSize:11,padding:"4px 10px",flexShrink:0}}
-                >
-                  Close
+        <TopRightPanel
+          isMobile={isMobile}
+          title="Alerts"
+          subtitle={`Showing notifications for ${users.find(t=>t.id===activeUser)?.name || currentUser?.name || "Current User"}`}
+          accentColor="#60A5FA"
+          closing={topPanelClosing}
+          onClose={closeTopPanel}
+          badge={<span style={{background:"rgba(15,23,42,0.92)",border:"1px solid rgba(125,211,252,0.26)",borderRadius:999,padding:"3px 10px",fontSize:10.5,color:"#E0F2FE",fontWeight:800,textTransform:"uppercase",letterSpacing:0.8}}>{unreadCount} unread</span>}
+          actions={
+            <>
+              {!pushEnabled&&(
+                <button onClick={enablePush} style={{...btnBlue,fontSize:11,padding:"5px 11px"}}>
+                  Enable Push
                 </button>
-              </div>
-              <div style={{display:"flex",gap:8,flexWrap:"wrap",marginTop:12}}>
-                {!pushEnabled&&(
-                  <button
-                    onClick={enablePush}
-                    style={{...btnBlue,fontSize:11,padding:"4px 10px"}}
-                  >
-                    Enable Push
-                  </button>
-                )}
-                <button
-                  onClick={()=>clearNotificationsForUser(activeUser)}
-                  style={{...btnGray,fontSize:11,padding:"4px 10px"}}
-                >
-                  Clear All
-                </button>
-              </div>
-            </div>
-
-            <div style={{padding:"8px 20px",background: pushEnabled?"#002D1A":"#2D1200",borderBottom:"1px solid #1F2937",fontSize:11,color:pushEnabled?"#34D399":"#FB923C",fontFamily:"'IBM Plex Mono',monospace",flexShrink:0}}>
-              {pushEnabled ? "Browser push notifications active on this device" : "Push notifications not enabled. Enable push to receive browser alerts on this device."}
-            </div>
-
-            <div style={{flex:1,overflowY:"auto",overscrollBehavior:"contain",padding:12,display:"flex",flexDirection:"column",gap:8}}>
-              {activeNotifications.length===0&&(
-                <div style={{textAlign:"center",padding:32,color:"#4B5563",fontFamily:"'Barlow Condensed',sans-serif",fontSize:16,letterSpacing:2,background:"#0C1117",border:"1px solid #1F2937",borderRadius:8}}>
-                  NO NOTIFICATIONS
-                </div>
               )}
-              {activeNotifications.map(n=>{
-                const nt = NOTIF_TYPES[n.type] || NOTIF_TYPES.schedule
-                const isRead = isNotificationReadForUser(n, activeUser)
-                return(
-                  <div
-                    key={n.id}
-                    style={{
-                      background:isRead ? "#151E2B" : "#0F1923",
-                      border:`1px solid ${isRead ? "#253449" : nt.color}44`,
-                      borderLeft:`3px solid ${isRead ? "#374151" : nt.color}`,
-                      borderRadius:8,
-                      padding:"10px 12px",
-                      boxSizing:"border-box"
-                    }}
-                  >
-                    <div style={{display:"flex",gap:8,alignItems:"center",marginBottom:4}}>
-                      <span style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:10,color:nt.color,padding:"1px 6px",border:`1px solid ${nt.color}`,borderRadius:6,flexShrink:0}}>{nt.icon}</span>
-                      <span style={{fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700,fontSize:13,color:nt.color,letterSpacing:1,flex:1,minWidth:0,overflowWrap:"anywhere"}}>{cleanUiText(n.title)}</span>
-                      <span style={{fontSize:10,color:"#4B5563",fontFamily:"'IBM Plex Mono',monospace",whiteSpace:"nowrap",flexShrink:0}}>{fmtT(n.time)}</span>
+              <button onClick={()=>clearNotificationsForUser(activeUser)} style={{...btnGray,fontSize:11,padding:"5px 11px"}}>
+                Clear All
+              </button>
+            </>
+          }
+        >
+          <div style={{padding:"10px 12px",background: pushEnabled ? "linear-gradient(180deg,rgba(6,78,59,0.85) 0%, rgba(4,47,46,0.9) 100%)" : "linear-gradient(180deg,rgba(120,53,15,0.78) 0%, rgba(67,20,7,0.86) 100%)",border:`1px solid ${pushEnabled ? "rgba(52,211,153,0.26)" : "rgba(251,146,60,0.24)"}`,borderRadius:14,fontSize:11,color:pushEnabled ? "#A7F3D0" : "#FED7AA",fontFamily:"'IBM Plex Mono',monospace",lineHeight:1.5}}>
+            {pushEnabled ? "Browser push notifications active on this device." : "Push notifications are off on this device. Enable push to receive browser alerts."}
+          </div>
+          {activeNotifications.length===0&&(
+            <div style={{...emptyStateCardStyle,fontFamily:"'Barlow Condensed',sans-serif",fontSize:16,letterSpacing:1.4}}>
+              No notifications yet
+            </div>
+          )}
+          {activeNotifications.map(n=>{
+            const nt = NOTIF_TYPES[n.type] || NOTIF_TYPES.schedule
+            const isRead = isNotificationReadForUser(n, activeUser)
+            return(
+              <div
+                key={n.id}
+                style={{
+                  background:isRead ? "linear-gradient(180deg,#111A27 0%,#0D1520 100%)" : "linear-gradient(180deg,#132132 0%,#101A28 100%)",
+                  border:`1px solid ${isRead ? "rgba(148,163,184,0.14)" : `${nt.color}36`}`,
+                  borderRadius:16,
+                  padding:"12px 13px",
+                  boxShadow:isRead ? "none" : "0 10px 22px rgba(2,6,23,0.16)"
+                }}
+              >
+                <div style={{display:"flex",alignItems:"flex-start",gap:10}}>
+                  <span style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:10,color:nt.color,padding:"4px 7px",border:`1px solid ${nt.color}55`,borderRadius:999,flexShrink:0,background:`${nt.color}12`}}>{nt.icon}</span>
+                  <div style={{flex:1,minWidth:0}}>
+                    <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:8}}>
+                      <div style={{fontFamily:"'Barlow Condensed',sans-serif",fontWeight:800,fontSize:16,color:isRead ? "#DCE7F5" : "#F8FBFF",letterSpacing:0.5,lineHeight:1.1,overflowWrap:"anywhere"}}>{cleanUiText(n.title)}</div>
+                      <span style={{fontSize:10,color:"#66798F",fontFamily:"'IBM Plex Mono',monospace",whiteSpace:"nowrap",flexShrink:0,marginTop:2}}>{fmtT(n.time)}</span>
                     </div>
-                    <div style={{fontSize:12,color:"#9CA3AF",lineHeight:1.45,paddingLeft:22,overflowWrap:"anywhere",wordBreak:"break-word"}}>
+                    <div style={{fontSize:12,color:"#9EB0C5",lineHeight:1.55,marginTop:7,overflowWrap:"anywhere",wordBreak:"break-word"}}>
                       {cleanUiText(n.body)}
                     </div>
-                    <div style={{display:"flex",gap:4,marginTop:8,paddingLeft:22,flexWrap:"wrap"}}>
+                    <div style={{display:"flex",gap:6,marginTop:10,flexWrap:"wrap"}}>
+                      <span style={{fontSize:10,color:nt.color,background:`${nt.color}14`,border:`1px solid ${nt.color}33`,padding:"3px 8px",borderRadius:999,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:800,letterSpacing:0.8,textTransform:"uppercase"}}>{nt.label}</span>
                       {n.recipients.map(r=>{
                         const tm = users.find(t=>t.id===r)
-                        return tm ? <span key={r} style={{fontSize:10,color:"#93C5FD",background:"#1D4ED833",padding:"1px 6px",borderRadius:10,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700}}>{tm.name}</span> : null
+                        return tm ? <span key={r} style={{fontSize:10,color:"#DCE7F5",background:"rgba(29,78,216,0.2)",border:"1px solid rgba(96,165,250,0.24)",padding:"3px 8px",borderRadius:999,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700,letterSpacing:0.4}}>{tm.name}</span> : null
                       })}
                     </div>
-                    <div style={{display:"flex",justifyContent:"flex-end",gap:8,marginTop:10}}>
-                      {!isRead ? <button onClick={()=>markNotificationsReadForUser(activeUser, [n.id])} style={{...btnGray,fontSize:10,padding:"4px 10px"}}>Mark Read</button> : null}
-                      <button onClick={()=>dismissNotificationsForUser(activeUser, [n.id])} style={{...btnGray,fontSize:10,padding:"4px 10px"}}>Dismiss</button>
+                    <div style={{display:"flex",justifyContent:"flex-end",gap:8,marginTop:12,flexWrap:"wrap"}}>
+                      {!isRead ? <button onClick={()=>markNotificationsReadForUser(activeUser, [n.id])} style={{...btnGray,fontSize:10,padding:"5px 10px"}}>Mark Read</button> : null}
+                      <button onClick={()=>dismissNotificationsForUser(activeUser, [n.id])} style={{...btnGray,fontSize:10,padding:"5px 10px"}}>Dismiss</button>
                     </div>
                   </div>
-                )
-              })}
-            </div>
-          </div>
-        </>
+                </div>
+              </div>
+            )
+          })}
+        </TopRightPanel>
       )}
 
-      {showQuickRef && !notifPanel && !showLegend && (
-        <>
-          <div
-            onClick={()=>setShowQuickRef(false)}
-            style={{
-              position:"fixed",
-              inset:0,
-              background:"rgba(0,0,0,0.6)",
-              zIndex:199
-            }}
-          />
-          <QuickReferenceDrawer isMobile={isMobile} onClose={()=>setShowQuickRef(false)} />
-        </>
+      {showQuickRef && (
+        <QuickReferenceDrawer isMobile={isMobile} onClose={closeTopPanel} closing={topPanelClosing} />
       )}
 
 
       {/* ---- LEGEND ---- */}
-      {showLegend && !notifPanel && !showQuickRef && (
-  <>
-        {/* BACKDROP (click to close) */}
-        <div
-          onClick={()=>setShowLegend(false)}
-          style={{
-            position:"fixed",
-            inset:0,
-            background:"rgba(0,0,0,0.6)",
-            zIndex:199
-          }}
-        />
-
-        {/* PANEL */}
-        <div
-          className="slide-in"
-          style={{
-            position:"fixed",
-            top:52,
-            right: isMobile ? "5%" : 0,
-
-            width: isMobile ? "90%" : 360,
-            maxWidth:"100%",
-
-            height: isMobile ? "auto" : "calc(100vh - 52px)",
-            maxHeight: isMobile ? "80vh" : "100%",
-
-            overflowY:"auto",
-
-            background:"#111827",
-            borderLeft:"2px solid #1D4ED8",
-            borderRadius: isMobile ? 10 : 0,
-
-            zIndex:200,
-            padding:20
-          }}
+      {showLegend && (
+        <TopRightPanel
+          isMobile={isMobile}
+          title="KEY"
+          subtitle="Status meanings and notification routing for the field operations workspace."
+          accentColor="#60A5FA"
+          closing={topPanelClosing}
+          onClose={closeTopPanel}
         >
-          <div style={{
-            fontFamily:"'Barlow Condensed',sans-serif",
-            fontWeight:900,
-            fontSize:22,
-            color:"#60A5FA",
-            letterSpacing:2,
-            marginBottom:16
-          }}>
-            STATUS KEY
-          </div>
-
           {LEGEND_ITEMS.map(it=>(
-            <div key={it.status} style={{
-              background:"#1F2937",
-              borderLeft:`4px solid ${it.color}`,
-              borderRadius:4,
-              padding:"10px 14px",
-              marginBottom:10
-            }}>
-              <div style={{
-                fontFamily:"'Barlow Condensed',sans-serif",
-                fontWeight:700,
-                fontSize:16,
-                color:it.color,
-                letterSpacing:1,
-                marginBottom:4
-              }}>
-                {it.status}
-              </div>
-              <div style={{
-                fontSize:13,
-                color:"#D1D5DB",
-                lineHeight:1.5
-              }}>
-                {it.def}
-              </div>
+            <div key={it.status} style={{background:"linear-gradient(180deg,#121D2B 0%,#0E1722 100%)",border:`1px solid ${it.color}30`,borderLeft:`4px solid ${it.color}`,borderRadius:16,padding:"12px 14px"}}>
+              <div style={{fontFamily:"'Barlow Condensed',sans-serif",fontWeight:800,fontSize:17,color:it.color,letterSpacing:0.8,marginBottom:5}}>{it.status}</div>
+              <div style={{fontSize:12.5,color:"#C8D5E4",lineHeight:1.55}}>{it.def}</div>
             </div>
           ))}
-
-          <div style={{
-            marginTop:20,
-            borderTop:"1px solid #374151",
-            paddingTop:16
-          }}>
-            <div style={{
-              fontFamily:"'Barlow Condensed',sans-serif",
-              fontWeight:900,
-              fontSize:16,
-              color:"#F97316",
-              letterSpacing:2,
-              marginBottom:8
-            }}>
-              NOTIFICATION ROUTING
+          <div style={{...mutedPanelStyle,marginTop:2}}>
+            <div style={{fontFamily:"'Barlow Condensed',sans-serif",fontWeight:900,fontSize:16,color:"#F97316",letterSpacing:1.2,marginBottom:10}}>Notification Routing</div>
+            <div style={{display:"flex",flexDirection:"column",gap:8}}>
+              {Object.entries(NOTIF_TYPES).map(([k,v])=>(
+                <div key={k} style={{display:"grid",gridTemplateColumns:"28px 88px 1fr",gap:10,alignItems:"center",padding:"8px 0",borderBottom:"1px solid rgba(148,163,184,0.1)"}}>
+                  <span style={{color:v.color,fontFamily:"'IBM Plex Mono',monospace",fontSize:11}}>{v.icon}</span>
+                  <span style={{color:v.color,fontWeight:800,fontFamily:"'Barlow Condensed',sans-serif",letterSpacing:0.8}}>{v.label}</span>
+                  <span style={{color:"#9CAFC4",fontSize:12}}>All approved team members</span>
+                </div>
+              ))}
             </div>
-
-            {Object.entries(NOTIF_TYPES).map(([k,v])=>(
-              <div key={k} style={{
-                display:"flex",
-                gap:10,
-                padding:"5px 0",
-                borderBottom:"1px solid #1F2937",
-                fontSize:12
-              }}>
-                <span style={{color:v.color,minWidth:24}}>{v.icon}</span>
-
-                <span style={{
-                  color:v.color,
-                  fontWeight:700,
-                  minWidth:80,
-                  fontFamily:"'Barlow Condensed',sans-serif",
-                  letterSpacing:1
-                }}>
-                  {v.label}
-                </span>
-
-                <span style={{color:"#9CA3AF"}}>All Approved Team Members</span>
-              </div>
-            ))}
           </div>
-        </div>
-      </>
-    )}
+        </TopRightPanel>
+      )}
 
       {resetPasswordTarget && (
         <>
@@ -9240,46 +9133,30 @@ function MileageTab({mileage,addMileage,setMileage,properties,clients,canAdd=tru
   )
 }
 
-function QuickReferenceDrawer({ isMobile, onClose }) {
+function QuickReferenceDrawer({ isMobile, onClose, closing=false }) {
   return (
-    <div
-      className="slide-in"
-      style={{
-        position:"fixed",
-        top:52,
-        right:isMobile ? "5%" : 0,
-        width:isMobile ? "90%" : 380,
-        maxWidth:"100%",
-        height:isMobile ? "auto" : "calc(100vh - 52px)",
-        maxHeight:isMobile ? "80vh" : "100%",
-        overflowY:"auto",
-        background:"#111827",
-        borderLeft:"2px solid #60A5FA",
-        borderRadius:isMobile ? 10 : 0,
-        zIndex:200,
-        padding:20
-      }}
+    <TopRightPanel
+      isMobile={isMobile}
+      title="Portals"
+      subtitle="Fast access to the links, contacts, and reference points the field team uses most."
+      accentColor="#60A5FA"
+      closing={closing}
+      onClose={onClose}
     >
-      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16}}>
-        <div style={{fontFamily:"'Barlow Condensed',sans-serif",fontWeight:900,fontSize:22,color:"#60A5FA",letterSpacing:2}}>
-          KEY PORTALS & CONTACTS
-        </div>
-        <button onClick={onClose} style={{...btnGray,fontSize:11,padding:"4px 10px"}}>Close</button>
-      </div>
-      <div style={{display:"flex",flexDirection:"column",gap:8}}>
+      <div style={{display:"flex",flexDirection:"column",gap:10}}>
         {QUICK_REFERENCE_ITEMS.map(item=>(
-          <div key={item.label} style={{background:"#1F2937",border:"1px solid #374151",borderRadius:8,padding:"10px 12px"}}>
-            <div style={{fontSize:12,color:"#F9FAFB",fontWeight:700}}>{item.label}</div>
-            <div style={{fontSize:12,color:"#9CA3AF",marginTop:4}}>
-              {item.href ? <a href={item.href} target="_blank" rel="noreferrer" style={{color:"#93C5FD"}}>{item.value}</a> : item.value}
+          <div key={item.label} style={{background:"linear-gradient(180deg,#121D2B 0%,#0E1722 100%)",border:"1px solid rgba(148,163,184,0.14)",borderRadius:16,padding:"12px 13px"}}>
+            <div style={{fontSize:12.5,color:"#F8FBFF",fontWeight:800}}>{item.label}</div>
+            <div style={{fontSize:12,color:"#9EB0C5",marginTop:5,lineHeight:1.5}}>
+              {item.href ? <a href={item.href} target="_blank" rel="noreferrer" style={{color:"#7DD3FC",textDecoration:"none"}}>{item.value}</a> : item.value}
             </div>
           </div>
         ))}
       </div>
-      <div style={{fontSize:11,color:"#6B7280",marginTop:16,lineHeight:1.5}}>
+      <div style={{fontSize:11,color:"#7F93A8",lineHeight:1.6,padding:"4px 2px 2px"}}>
         {QUICK_REFERENCE_FOOTER}
       </div>
-    </div>
+    </TopRightPanel>
   )
 }
 
@@ -9386,4 +9263,74 @@ const appNavButtonStyle = (active = false) => ({
   textOverflow:"ellipsis",
   flex:"1 1 0"
 })
+const topToolbarButtonStyle = (active = false) => ({
+  ...utilityButtonStyle,
+  background:active ? "linear-gradient(180deg,#21354A,#18293A)" : utilityButtonStyle.background,
+  border:active ? "1px solid rgba(125,211,252,0.42)" : utilityButtonStyle.border,
+  color:active ? "#F8FBFF" : utilityButtonStyle.color,
+  boxShadow:active ? "0 12px 22px rgba(37,99,235,0.18)" : utilityButtonStyle.boxShadow
+})
+const topPanelSurfaceStyle = (isMobile, accentColor = "#60A5FA") => ({
+  position:"fixed",
+  top:58,
+  right:isMobile ? 12 : 14,
+  width:isMobile ? "calc(100% - 24px)" : 392,
+  maxWidth:"calc(100% - 24px)",
+  height:isMobile ? "auto" : "min(calc(100vh - 74px), 760px)",
+  maxHeight:isMobile ? "min(calc(100vh - 84px), 78vh)" : "min(calc(100vh - 74px), 760px)",
+  background:"linear-gradient(180deg,#121D2B 0%,#0C1520 100%)",
+  border:`1px solid ${accentColor}30`,
+  borderRadius:22,
+  boxShadow:"0 30px 70px rgba(0,0,0,0.5)",
+  zIndex:200,
+  display:"flex",
+  flexDirection:"column",
+  overflow:"hidden",
+  backdropFilter:"blur(16px)"
+})
+function TopRightPanel({
+  isMobile,
+  title,
+  subtitle="",
+  accentColor="#60A5FA",
+  badge=null,
+  actions=null,
+  children,
+  onClose,
+  closing=false
+}) {
+  return (
+    <>
+      <div
+        onClick={onClose}
+        className={closing ? "top-panel-backdrop-out" : "top-panel-backdrop-in"}
+        style={{
+          position:"fixed",
+          inset:0,
+          background:"rgba(3,8,16,0.66)",
+          backdropFilter:"blur(6px)",
+          zIndex:199
+        }}
+      />
+      <div className={closing ? "top-panel-shell-out" : "top-panel-shell-in"} style={topPanelSurfaceStyle(isMobile, accentColor)}>
+        <div style={{padding:"18px 18px 16px",borderBottom:"1px solid rgba(148,163,184,0.12)",background:"linear-gradient(180deg,rgba(17,30,45,0.95) 0%, rgba(15,24,36,0.92) 100%)",flexShrink:0}}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:12}}>
+            <div style={{minWidth:0}}>
+              <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
+                <div style={{fontFamily:"'Barlow Condensed',sans-serif",fontWeight:900,fontSize:22,color:accentColor,letterSpacing:1.3,lineHeight:1}}>{title}</div>
+                {badge}
+              </div>
+              {subtitle ? <div style={{fontSize:11.5,color:"#8FA3B8",marginTop:6,lineHeight:1.5,overflowWrap:"anywhere"}}>{subtitle}</div> : null}
+            </div>
+            <button onClick={onClose} style={{...btnGray,fontSize:11,padding:"5px 10px",flexShrink:0}}>Close</button>
+          </div>
+          {actions ? <div style={{display:"flex",gap:8,flexWrap:"wrap",marginTop:14}}>{actions}</div> : null}
+        </div>
+        <div style={{flex:1,overflowY:"auto",overscrollBehavior:"contain",padding:14,display:"flex",flexDirection:"column",gap:10}}>
+          {children}
+        </div>
+      </div>
+    </>
+  )
+}
 
