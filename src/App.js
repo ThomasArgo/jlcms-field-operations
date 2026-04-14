@@ -7033,15 +7033,15 @@ function ScheduleTab({ activeUser, currentUser, teamUsers = [], recurringWeeklyS
           <div style={{minWidth:0}}>
             <div style={{fontSize:16,fontWeight:800,color:"#F8FBFF",lineHeight:1.3,wordBreak:"break-word",overflowWrap:"anywhere"}}>{task.title}</div>
             <div style={{fontSize:12,color:plannerTheme.muted,marginTop:5,lineHeight:1.5}}>
-              {(assigned?.name || "Unassigned") + " Â· Due " + formatDateLong(task.dueDate)}{task.dueTime ? ` ${displayTimeValue(task.dueTime)}` : ""}
+              {(assigned?.name || "Unassigned") + " | Due " + formatDateLong(task.dueDate)}{task.dueTime ? ` ${displayTimeValue(task.dueTime)}` : ""}
             </div>
           </div>
           {task.detail ? <div style={{fontSize:12,color:plannerTheme.text,lineHeight:1.6,wordBreak:"break-word",overflowWrap:"anywhere"}}>{task.detail}</div> : null}
           <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
             <span style={{...plannerPillStyle,color:priorityColor,border:`1px solid ${priorityColor}66`,background:`${priorityColor}12`}}>{task.priority}</span>
             <span style={{...plannerPillStyle,color:statusColor,border:`1px solid ${statusColor}66`,background:`${statusColor}12`}}>{task.status}</span>
-            {linkedProp && <span style={plannerPillStyle}>{`Job Â· ${linkedProp.address}`}</span>}
-            {linkedClient && <span style={plannerPillStyle}>{`Client Â· ${linkedClient.name}`}</span>}
+            {linkedProp && <span style={plannerPillStyle}>{`Job | ${linkedProp.address}`}</span>}
+            {linkedClient && <span style={plannerPillStyle}>{`Client | ${linkedClient.name}`}</span>}
           </div>
           <div style={{display:"flex",gap:8,flexWrap:"wrap",alignItems:"stretch"}}>
             <AppSelect value={task.status} onChange={e=>updateTaskStatus(task.id, e.target.value)} style={{...iStyle,padding:"8px 10px",fontSize:12,width:isMobile?"100%":132,flex:isMobile ? "1 1 100%" : "0 0 auto"}} disabled={!canUpdateTaskStatus(task)}>{["To Do","In Progress","Done"].map(s=><option key={s}>{s}</option>)}</AppSelect>
@@ -9313,13 +9313,13 @@ function AppSelect({ children, style, className="", shellStyle, ...props }) {
 
   return (
     <div className="app-select-shell" style={{ ...layoutStyle, ...shellStyle }}>
-      <AppSelect
+      <select
         {...props}
         className={["app-select-control", className].filter(Boolean).join(" ")}
         style={createSelectControlStyle(controlStyle)}
       >
         {children}
-      </AppSelect>
+      </select>
     </div>
   )
 }
