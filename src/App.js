@@ -7030,6 +7030,29 @@ function ScheduleTab({ activeUser, currentUser, teamUsers = [], recurringWeeklyS
     alignItems:"center",
     paddingTop:isDesktop ? 10 : 0
   }
+  const plannerScheduleWindowGridStyle = isMobile
+    ? { display:"flex", flexDirection:"column", gap:sectionGap }
+    : {
+        display:"grid",
+        gridTemplateColumns:isWideDesktop
+          ? "minmax(220px,0.85fr) minmax(360px,1.2fr) minmax(220px,0.8fr)"
+          : "minmax(200px,0.9fr) minmax(320px,1.15fr)",
+        gap:sectionGap,
+        alignItems:"stretch"
+      }
+  const plannerTimeRangeGroupStyle = {
+    display:"grid",
+    gridTemplateColumns:isMobile ? "1fr" : "minmax(0,1fr) minmax(0,1fr)",
+    gap:sectionGap,
+    minWidth:0,
+    alignItems:"start"
+  }
+  const plannerFieldGroupStyle = {
+    display:"flex",
+    flexDirection:"column",
+    gap:10,
+    minWidth:0
+  }
   const plannerEmptyStyle = {
     padding:"14px 12px",
     borderRadius:16,
@@ -7205,17 +7228,31 @@ function ScheduleTab({ activeUser, currentUser, teamUsers = [], recurringWeeklyS
                 </>
               ) : null}
               {assignmentForm.type==="oneoff" ? (
-                <div style={isDesktop ? plannerDesktopMetaGridStyle : {display:"flex",flexDirection:"column",gap:sectionGap}}>
-                  <div style={isDesktop ? plannerDesktopSectionStyle : {display:"flex",flexDirection:"column",gap:sectionGap}}>
-                    {isDesktop ? <div style={plannerDesktopSectionLabelStyle}>Schedule Window</div> : null}
-                    <div style={plannerInputGridStyle(isWideDesktop ? "minmax(0,1fr) minmax(0,1.05fr) minmax(0,1.05fr) minmax(0,0.95fr)" : "1fr 1fr")}>
-                      <input type="date" value={assignmentForm.date} onChange={e=>setAssignmentForm(f=>({...f,date:e.target.value}))} style={iStyle} />
-                      <TimePicker value={assignmentForm.start} onChange={value=>setAssignmentForm(f=>({...f,start:value}))} />
-                      <TimePicker value={assignmentForm.end} onChange={value=>setAssignmentForm(f=>({...f,end:value}))} />
-                      <AppSelect value={assignmentForm.oneOffMode} onChange={e=>setAssignmentForm(f=>({...f,oneOffMode:e.target.value}))} style={iStyle}><option value="supplement">Supplement</option><option value="override">Override</option></AppSelect>
+                <div style={plannerScheduleWindowGridStyle}>
+                  <div style={isDesktop ? plannerDesktopSectionStyle : plannerFieldGroupStyle}>
+                    {isDesktop ? <div style={plannerDesktopSectionLabelStyle}>Date</div> : null}
+                    {!isDesktop ? <Label>Schedule Date</Label> : null}
+                    <input type="date" value={assignmentForm.date} onChange={e=>setAssignmentForm(f=>({...f,date:e.target.value}))} style={iStyle} />
+                  </div>
+                  <div style={isDesktop ? plannerDesktopSectionStyle : plannerFieldGroupStyle}>
+                    {isDesktop ? <div style={plannerDesktopSectionLabelStyle}>Time Range</div> : null}
+                    <div style={plannerTimeRangeGroupStyle}>
+                      <div style={plannerFieldGroupStyle}>
+                        {!isDesktop ? <Label>Start Time</Label> : null}
+                        <TimePicker value={assignmentForm.start} onChange={value=>setAssignmentForm(f=>({...f,start:value}))} />
+                      </div>
+                      <div style={plannerFieldGroupStyle}>
+                        {!isDesktop ? <Label>End Time</Label> : null}
+                        <TimePicker value={assignmentForm.end} onChange={value=>setAssignmentForm(f=>({...f,end:value}))} />
+                      </div>
                     </div>
                   </div>
-                  <div style={isDesktop ? plannerDesktopSectionStyle : {display:"flex",flexDirection:"column",gap:sectionGap}}>
+                  <div style={isDesktop ? plannerDesktopSectionStyle : plannerFieldGroupStyle}>
+                    {isDesktop ? <div style={plannerDesktopSectionLabelStyle}>Type</div> : null}
+                    {!isDesktop ? <Label>Assignment Type</Label> : null}
+                    <AppSelect value={assignmentForm.oneOffMode} onChange={e=>setAssignmentForm(f=>({...f,oneOffMode:e.target.value}))} style={iStyle}><option value="supplement">Supplement</option><option value="override">Override</option></AppSelect>
+                  </div>
+                  <div style={isDesktop ? { ...plannerDesktopSectionStyle, gridColumn:isWideDesktop ? "1 / -1" : "1 / -1" } : {display:"flex",flexDirection:"column",gap:sectionGap}}>
                     {isDesktop ? <div style={plannerDesktopSectionLabelStyle}>Notes</div> : null}
                     <textarea value={assignmentForm.notes} onChange={e=>setAssignmentForm(f=>({...f,notes:e.target.value}))} placeholder="Notes / description" rows={isDesktop ? 5 : 2} style={{...iStyle,resize:"vertical",lineHeight:1.45,minHeight:isDesktop ? 150 : undefined}} />
                   </div>
