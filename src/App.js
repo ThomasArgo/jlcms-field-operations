@@ -44,6 +44,22 @@ function useIsMobile() {
   return isMobile
 }
 
+const SELECT_LAYOUT_KEYS = new Set([
+  "width",
+  "minWidth",
+  "maxWidth",
+  "flex",
+  "gridColumn",
+  "gridRow",
+  "alignSelf",
+  "justifySelf",
+  "margin",
+  "marginTop",
+  "marginRight",
+  "marginBottom",
+  "marginLeft"
+])
+
 /* ---- Google Fonts ---- */
 const FontLink = () => (
   <style>{`
@@ -73,6 +89,12 @@ const FontLink = () => (
     ::-webkit-scrollbar-track { background: #1A2332; }
     ::-webkit-scrollbar-thumb { background: #374151; border-radius: 3px; }
     select option { background: #1F2937; color: #F9FAFB; }
+    select {
+      -webkit-appearance: none;
+      -moz-appearance: none;
+      appearance: none;
+    }
+    select::-ms-expand { display:none; }
     .row-fade { animation: fadeIn 0.3s ease; }
     @keyframes fadeIn { from{opacity:0;transform:translateY(-4px)} to{opacity:1;transform:translateY(0)} }
     .pulse-yellow { animation: pulseY 2s infinite; }
@@ -102,6 +124,41 @@ const FontLink = () => (
     input:focus, textarea:focus, select:focus {
       outline: 1px solid var(--focus) !important;
       box-shadow: 0 0 0 3px rgba(251, 146, 60, 0.14);
+    }
+    .app-select-shell {
+      position: relative;
+      width: 100%;
+      min-width: 0;
+    }
+    .app-select-shell::after {
+      content: "";
+      position: absolute;
+      top: 50%;
+      right: 16px;
+      width: 11px;
+      height: 11px;
+      margin-top: -4px;
+      border-left: 2px solid rgba(209, 222, 239, 0.88);
+      border-bottom: 2px solid rgba(209, 222, 239, 0.88);
+      transform: rotate(-45deg);
+      pointer-events: none;
+      opacity: 0.92;
+      transition: transform 0.18s ease, opacity 0.18s ease;
+    }
+    .app-select-shell:focus-within::after {
+      transform: rotate(-45deg) translateY(1px);
+      opacity: 1;
+    }
+    .app-select-control {
+      width: 100%;
+      min-width: 0;
+      cursor: pointer;
+      padding-right: 44px !important;
+      touch-action: manipulation;
+    }
+    .app-select-control:disabled {
+      cursor: not-allowed;
+      opacity: 0.68;
     }
     button { transition: transform 0.12s ease, border-color 0.2s ease, background 0.2s ease, box-shadow 0.2s ease; }
     button:active { transform: translateY(1px); }
@@ -4268,30 +4325,30 @@ export default function JLCMSApp() {
                   placeholder="Search address, permit #, HCAD, client, contractor, inspector..."
                   style={{...iStyle,gridColumn:isMobile?"1 / -1":"auto"}}
                 />
-                <select value={dashSort} onChange={e=>setDashSort(e.target.value)} style={iStyle}>
+                <AppSelect value={dashSort} onChange={e=>setDashSort(e.target.value)} style={iStyle}>
                   <option value="newest">Newest</option>
                   <option value="oldest">Oldest</option>
-                </select>
-                <select value={dashStatus} onChange={e=>setDashStatus(e.target.value)} style={iStyle}>
+                </AppSelect>
+                <AppSelect value={dashStatus} onChange={e=>setDashStatus(e.target.value)} style={iStyle}>
                   <option value="All">All Statuses</option>
                   {PERMIT_STATUSES.map(s=><option key={s} value={s}>{s}</option>)}
-                </select>
-                <select value={dashWorkType} onChange={e=>setDashWorkType(e.target.value)} style={iStyle}>
+                </AppSelect>
+                <AppSelect value={dashWorkType} onChange={e=>setDashWorkType(e.target.value)} style={iStyle}>
                   <option value="All">All Job Types</option>
                   {WORK_TYPES.slice(1).map(w=><option key={w} value={w}>{w}</option>)}
-                </select>
-                <select value={dashVendor} onChange={e=>setDashVendor(e.target.value)} style={iStyle}>
+                </AppSelect>
+                <AppSelect value={dashVendor} onChange={e=>setDashVendor(e.target.value)} style={iStyle}>
                   <option value="All">All Contractors</option>
                   {vendors.map(v=><option key={v.id} value={v.id}>{v.company}</option>)}
-                </select>
-                <select value={dashInspector} onChange={e=>setDashInspector(e.target.value)} style={iStyle}>
+                </AppSelect>
+                <AppSelect value={dashInspector} onChange={e=>setDashInspector(e.target.value)} style={iStyle}>
                   <option value="All">All Inspectors</option>
                   {inspectors.map(ins=><option key={ins.id} value={ins.id}>{ins.name}</option>)}
-                </select>
-                <select value={dashClient} onChange={e=>setDashClient(e.target.value)} style={iStyle}>
+                </AppSelect>
+                <AppSelect value={dashClient} onChange={e=>setDashClient(e.target.value)} style={iStyle}>
                   <option value="All">All Clients</option>
                   {clients.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}
-                </select>
+                </AppSelect>
               </div>
 
               <label style={{display:"flex",alignItems:"center",gap:8,fontSize:12,color:"#9CA3AF"}}>
@@ -4414,15 +4471,15 @@ export default function JLCMSApp() {
                       </div>
                       <div>
                         <div style={sectionLabel}>Work Type</div>
-                        <select value={p.workType} onChange={e=>updateProp(p.id,"workType",e.target.value)} style={iStyle} disabled={!can("dashboard","edit")}>
+                        <AppSelect value={p.workType} onChange={e=>updateProp(p.id,"workType",e.target.value)} style={iStyle} disabled={!can("dashboard","edit")}>
                           {WORK_TYPES.map(w=><option key={w}>{w}</option>)}
-                        </select>
+                        </AppSelect>
                       </div>
                       <div>
                         <div style={sectionLabel}>Status</div>
-                        <select value={p.permitStatus} onChange={e=>updateProp(p.id,"permitStatus",e.target.value)} style={iStyle} disabled={!can("dashboard","edit")}>
+                        <AppSelect value={p.permitStatus} onChange={e=>updateProp(p.id,"permitStatus",e.target.value)} style={iStyle} disabled={!can("dashboard","edit")}>
                           {PERMIT_STATUSES.map(s=><option key={s}>{s}</option>)}
-                        </select>
+                        </AppSelect>
                       </div>
                     </div>
 
@@ -4808,15 +4865,15 @@ function ChatTab({ currentUser, users, messages, setMessages, modePref="team", p
 
       <div style={{...cardStyle,padding:12}}>
         <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(220px,1fr))",gap:8,marginBottom:10}}>
-          <select value={mode} onChange={e=>setMode(e.target.value)} style={iStyle}>
+          <AppSelect value={mode} onChange={e=>setMode(e.target.value)} style={iStyle}>
             <option value="team">Team Chat</option>
             <option value="dm">Private Message</option>
-          </select>
+          </AppSelect>
           {mode==="dm" && (
-            <select value={peerId} onChange={e=>setPeerId(e.target.value)} style={iStyle}>
+            <AppSelect value={peerId} onChange={e=>setPeerId(e.target.value)} style={iStyle}>
               <option value="">Choose User</option>
               {teammates.map(u=><option key={u.id} value={u.id}>{u.name}</option>)}
-            </select>
+            </AppSelect>
           )}
         </div>
         <div style={{height:"58vh",overflowY:"auto",border:"1px solid #1F2937",borderRadius:8,padding:10,background:"#0C1117",marginBottom:10}}>
@@ -4947,13 +5004,13 @@ function TeamTab({ currentUser, currentTeam, users, onMessage, canManageUsers=fa
                     <span style={{fontSize:11,color:"#6B7280"}}>CEO account protected</span>
                   ) : (
                     <div style={{display:"flex",gap:8,flexWrap:"wrap",alignItems:"center",justifyContent:isMobile?"flex-start":"flex-end",width:"100%",minWidth:0}}>
-                      <select
+                      <AppSelect
                         value={user.role||"member"}
                         onChange={e=>onAssignUserRole?.(user.id, e.target.value)}
                         style={{...iStyle,width:isMobile?"100%":"auto",minWidth:isMobile?0:150,maxWidth:"100%",padding:"6px 8px",fontSize:12,flex:isMobile?"1 1 100%":"0 0 auto"}}
                       >
                         {(currentTeam?.roles||["member"]).map(role=><option key={role} value={role}>{roleLabel(role)}</option>)}
-                      </select>
+                      </AppSelect>
                       {canShowReset && (
                         <button onClick={()=>onOpenResetPasswordModal?.(user)} style={{...btnBlue,flex:isMobile?"1 1 calc(50% - 4px)":"0 0 auto"}}>Reset Password</button>
                       )}
@@ -5066,16 +5123,16 @@ function InvoicesTab({ invoices, props, clients, selectedInvoiceId, setSelectedI
       <div style={{...cardStyle,marginBottom:12,padding:12}}>
         <div style={{display:"grid",gridTemplateColumns:isMobile?"1fr":"2fr 1fr 1fr",gap:8}}>
           <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search client or property address..." style={iStyle} />
-          <select value={sortBy} onChange={e=>setSortBy(e.target.value)} style={iStyle}>
+          <AppSelect value={sortBy} onChange={e=>setSortBy(e.target.value)} style={iStyle}>
             <option value="newest">Newest First</option>
             <option value="oldest">Oldest First</option>
             <option value="highest">Highest Amount</option>
             <option value="lowest">Lowest Amount</option>
-          </select>
-          <select value={statusFilter} onChange={e=>setStatusFilter(e.target.value)} style={iStyle}>
+          </AppSelect>
+          <AppSelect value={statusFilter} onChange={e=>setStatusFilter(e.target.value)} style={iStyle}>
             <option value="All">All Statuses</option>
             {INVOICE_STATUSES.map(s=><option key={s} value={s}>{s}</option>)}
-          </select>
+          </AppSelect>
         </div>
       </div>
 
@@ -5296,21 +5353,21 @@ function ClientsTab({ clients, setClients, props, setProps, canAdd=true, canEdit
         <div style={{display:"flex",flexDirection:"column",gap:8,width:isMobile?"100%":"auto"}}>
           <div style={{display:"flex",gap:8,flexWrap:"wrap",width:isMobile?"100%":"auto"}}>
           <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search by name or address..." style={{...iStyle,width:isMobile?"100%":260}} />
-          <select value={sortBy} onChange={e=>setSortBy(e.target.value)} style={{...iStyle,width:isMobile?"100%":170}}>
+          <AppSelect value={sortBy} onChange={e=>setSortBy(e.target.value)} style={{...iStyle,width:isMobile?"100%":170}}>
             <option value="newest">Date Added: Newest</option>
             <option value="oldest">Date Added: Oldest</option>
-          </select>
-          <select value={clientFilterBy} onChange={e=>setClientFilterBy(e.target.value)} style={{...iStyle,width:isMobile?"100%":180}}>
+          </AppSelect>
+          <AppSelect value={clientFilterBy} onChange={e=>setClientFilterBy(e.target.value)} style={{...iStyle,width:isMobile?"100%":180}}>
             <option value="none">No Extra Filter</option>
             <option value="jobType">Filter by Job Type</option>
-          </select>
+          </AppSelect>
           <button onClick={clearFilters} style={btnGray}>Reset</button>
           </div>
           {clientFilterBy==="jobType" && (
-            <select value={clientJobTypeFilter} onChange={e=>setClientJobTypeFilter(e.target.value)} style={{...iStyle,width:isMobile?"100%":220}}>
+            <AppSelect value={clientJobTypeFilter} onChange={e=>setClientJobTypeFilter(e.target.value)} style={{...iStyle,width:isMobile?"100%":220}}>
               <option value="All">All Job Types</option>
               {WORK_TYPES.slice(1).map(w=><option key={w} value={w}>{w}</option>)}
-            </select>
+            </AppSelect>
           )}
           {(search || sortBy!=="newest" || clientFilterBy!=="none" || (clientFilterBy==="jobType"&&clientJobTypeFilter!=="All")) && (
             <div style={{display:"flex",gap:6,flexWrap:"wrap",alignItems:"center"}}>
@@ -5331,10 +5388,10 @@ function ClientsTab({ clients, setClients, props, setProps, canAdd=true, canEdit
             <input value={form.name} onChange={e=>setForm(f=>({...f,name:e.target.value}))} placeholder="Client name *" style={iStyle} />
             <input value={form.company} onChange={e=>setForm(f=>({...f,company:e.target.value}))} placeholder="Company / organization (optional)" style={iStyle} />
             <input value={form.address} onChange={e=>setForm(f=>({...f,address:e.target.value}))} placeholder="Client address" style={iStyle} />
-            <select value={form.jobId} onChange={e=>setForm(f=>({...f,jobId:e.target.value}))} style={iStyle}>
+            <AppSelect value={form.jobId} onChange={e=>setForm(f=>({...f,jobId:e.target.value}))} style={iStyle}>
               <option value="">Assign Job Order</option>
               {props.map(p=><option key={p.id} value={p.id}>{p.address}</option>)}
-            </select>
+            </AppSelect>
             <input value={form.phone} onChange={e=>setForm(f=>({...f,phone:e.target.value}))} placeholder="Phone" style={iStyle} />
             <input value={form.email} onChange={e=>setForm(f=>({...f,email:e.target.value}))} placeholder="Email" style={iStyle} />
             <textarea value={form.notes} onChange={e=>setForm(f=>({...f,notes:e.target.value}))} placeholder="Notes (optional)" rows={4} style={{...iStyle,resize:"vertical",lineHeight:1.5,gridColumn:isMobile?"auto":"1 / -1"}} />
@@ -6343,9 +6400,9 @@ function MoreTab({ currentUser, currentTeam, users, isCurrentAdmin, isCurrentCeo
                     <span style={{fontSize:11,color:"#6B7280"}}>Protected</span>
                   ) : (
                     <div style={{display:"flex",gap:8,flexWrap:"wrap",alignItems:"center",justifyContent:isMobile?"flex-start":"flex-end",width:"100%",minWidth:0}}>
-                      <select value={u.role||"member"} onChange={e=>onAssignUserRole(u.id, e.target.value)} style={{...iStyle,width:isMobile?"100%":"auto",minWidth:isMobile?0:140,maxWidth:"100%",padding:"6px 8px",fontSize:12,flex:isMobile?"1 1 100%":"0 0 auto"}}>
+                      <AppSelect value={u.role||"member"} onChange={e=>onAssignUserRole(u.id, e.target.value)} style={{...iStyle,width:isMobile?"100%":"auto",minWidth:isMobile?0:140,maxWidth:"100%",padding:"6px 8px",fontSize:12,flex:isMobile?"1 1 100%":"0 0 auto"}}>
                         {(currentTeam?.roles||["member"]).map(r=><option key={r} value={r}>{roleLabel(r)}</option>)}
-                      </select>
+                      </AppSelect>
                       {canResetPasswords && u.id !== currentUser?.id && (
                         <button onClick={()=>onOpenResetPasswordModal?.(u)} style={{...btnBlue,flex:isMobile?"1 1 calc(50% - 4px)":"0 0 auto"}}>Reset Password</button>
                       )}
@@ -6412,7 +6469,7 @@ function TimePicker({ value, onChange, style, allowEmpty=false, storageFormat="1
 
   return (
     <div style={wrapperStyle}>
-      <select
+      <AppSelect
         value={hour}
         onChange={e=>{
           const nextHour = e.target.value
@@ -6423,8 +6480,8 @@ function TimePicker({ value, onChange, style, allowEmpty=false, storageFormat="1
       >
         {allowEmpty && <option value="">No Time</option>}
         {hourOptions.map(option=><option key={option} value={option}>{option}</option>)}
-      </select>
-      <select
+      </AppSelect>
+      <AppSelect
         value={minute}
         onChange={e=>{
           const nextMinute = e.target.value
@@ -6434,8 +6491,8 @@ function TimePicker({ value, onChange, style, allowEmpty=false, storageFormat="1
         style={selectStyle}
       >
         {minuteOptions.map(option=><option key={option} value={option}>{option}</option>)}
-      </select>
-      <select
+      </AppSelect>
+      <AppSelect
         value={period}
         onChange={e=>{
           const nextPeriod = e.target.value
@@ -6445,7 +6502,7 @@ function TimePicker({ value, onChange, style, allowEmpty=false, storageFormat="1
         style={selectStyle}
       >
         {["AM","PM"].map(option=><option key={option} value={option}>{option}</option>)}
-      </select>
+      </AppSelect>
     </div>
   )
 }
@@ -6976,18 +7033,18 @@ function ScheduleTab({ activeUser, currentUser, teamUsers = [], recurringWeeklyS
           <div style={{minWidth:0}}>
             <div style={{fontSize:16,fontWeight:800,color:"#F8FBFF",lineHeight:1.3,wordBreak:"break-word",overflowWrap:"anywhere"}}>{task.title}</div>
             <div style={{fontSize:12,color:plannerTheme.muted,marginTop:5,lineHeight:1.5}}>
-              {(assigned?.name || "Unassigned") + " · Due " + formatDateLong(task.dueDate)}{task.dueTime ? ` ${displayTimeValue(task.dueTime)}` : ""}
+              {(assigned?.name || "Unassigned") + " Â· Due " + formatDateLong(task.dueDate)}{task.dueTime ? ` ${displayTimeValue(task.dueTime)}` : ""}
             </div>
           </div>
           {task.detail ? <div style={{fontSize:12,color:plannerTheme.text,lineHeight:1.6,wordBreak:"break-word",overflowWrap:"anywhere"}}>{task.detail}</div> : null}
           <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
             <span style={{...plannerPillStyle,color:priorityColor,border:`1px solid ${priorityColor}66`,background:`${priorityColor}12`}}>{task.priority}</span>
             <span style={{...plannerPillStyle,color:statusColor,border:`1px solid ${statusColor}66`,background:`${statusColor}12`}}>{task.status}</span>
-            {linkedProp && <span style={plannerPillStyle}>{`Job · ${linkedProp.address}`}</span>}
-            {linkedClient && <span style={plannerPillStyle}>{`Client · ${linkedClient.name}`}</span>}
+            {linkedProp && <span style={plannerPillStyle}>{`Job Â· ${linkedProp.address}`}</span>}
+            {linkedClient && <span style={plannerPillStyle}>{`Client Â· ${linkedClient.name}`}</span>}
           </div>
           <div style={{display:"flex",gap:8,flexWrap:"wrap",alignItems:"stretch"}}>
-            <select value={task.status} onChange={e=>updateTaskStatus(task.id, e.target.value)} style={{...iStyle,padding:"8px 10px",fontSize:12,width:isMobile?"100%":132,flex:isMobile ? "1 1 100%" : "0 0 auto"}} disabled={!canUpdateTaskStatus(task)}>{["To Do","In Progress","Done"].map(s=><option key={s}>{s}</option>)}</select>
+            <AppSelect value={task.status} onChange={e=>updateTaskStatus(task.id, e.target.value)} style={{...iStyle,padding:"8px 10px",fontSize:12,width:isMobile?"100%":132,flex:isMobile ? "1 1 100%" : "0 0 auto"}} disabled={!canUpdateTaskStatus(task)}>{["To Do","In Progress","Done"].map(s=><option key={s}>{s}</option>)}</AppSelect>
             {(canManageTasks || canEdit) && <button onClick={()=>editTask(task)} style={{...plannerActionButtonStyle("primary"),flex:isMobile ? "1 1 0" : "0 0 auto"}}>Edit</button>}
             {canDelete && <button onClick={()=>removeTask(task.id)} style={{...plannerActionButtonStyle("danger"),flex:isMobile ? "1 1 0" : "0 0 auto"}}>Delete</button>}
           </div>
@@ -7067,7 +7124,7 @@ function ScheduleTab({ activeUser, currentUser, teamUsers = [], recurringWeeklyS
                 ))}
               </div>
               <div style={plannerInputGridStyle("1fr 1fr")}>
-                <select value={assignmentForm.userId} onChange={e=>setAssignmentForm(f=>({...f,userId:e.target.value}))} style={iStyle}><option value="">Assign User</option>{teamUsers.map(u=><option key={u.id} value={u.id}>{u.name}</option>)}</select>
+                <AppSelect value={assignmentForm.userId} onChange={e=>setAssignmentForm(f=>({...f,userId:e.target.value}))} style={iStyle}><option value="">Assign User</option>{teamUsers.map(u=><option key={u.id} value={u.id}>{u.name}</option>)}</AppSelect>
                 <input value={assignmentForm.title} onChange={e=>setAssignmentForm(f=>({...f,title:e.target.value}))} placeholder={assignmentForm.type==="task" ? "Task title" : "Assignment title"} style={iStyle} />
               </div>
               {assignmentForm.type==="task" ? <textarea value={assignmentForm.notes} onChange={e=>setAssignmentForm(f=>({...f,notes:e.target.value}))} placeholder="Notes / description" rows={3} style={{...iStyle,resize:"vertical",lineHeight:1.45}} /> : null}
@@ -7079,7 +7136,7 @@ function ScheduleTab({ activeUser, currentUser, teamUsers = [], recurringWeeklyS
                   <div style={plannerInputGridStyle("1fr 1fr 1fr 1fr")}>
                     <TimePicker value={assignmentForm.start} onChange={value=>setAssignmentForm(f=>({...f,start:value}))} />
                     <TimePicker value={assignmentForm.end} onChange={value=>setAssignmentForm(f=>({...f,end:value}))} />
-                    <select value={assignmentForm.repeatRule} onChange={e=>setAssignmentForm(f=>({...f,repeatRule:e.target.value}))} style={iStyle}><option>Weekly</option><option>Biweekly</option><option>Custom</option></select>
+                    <AppSelect value={assignmentForm.repeatRule} onChange={e=>setAssignmentForm(f=>({...f,repeatRule:e.target.value}))} style={iStyle}><option>Weekly</option><option>Biweekly</option><option>Custom</option></AppSelect>
                     <input type="date" value={assignmentForm.endDate} onChange={e=>setAssignmentForm(f=>({...f,endDate:e.target.value}))} style={iStyle} />
                   </div>
                   <textarea value={assignmentForm.notes} onChange={e=>setAssignmentForm(f=>({...f,notes:e.target.value}))} placeholder="Notes / description" rows={3} style={{...iStyle,resize:"vertical",lineHeight:1.45}} />
@@ -7090,7 +7147,7 @@ function ScheduleTab({ activeUser, currentUser, teamUsers = [], recurringWeeklyS
                   <input type="date" value={assignmentForm.date} onChange={e=>setAssignmentForm(f=>({...f,date:e.target.value}))} style={iStyle} />
                   <TimePicker value={assignmentForm.start} onChange={value=>setAssignmentForm(f=>({...f,start:value}))} />
                   <TimePicker value={assignmentForm.end} onChange={value=>setAssignmentForm(f=>({...f,end:value}))} />
-                  <select value={assignmentForm.oneOffMode} onChange={e=>setAssignmentForm(f=>({...f,oneOffMode:e.target.value}))} style={iStyle}><option value="supplement">Supplement</option><option value="override">Override</option></select>
+                  <AppSelect value={assignmentForm.oneOffMode} onChange={e=>setAssignmentForm(f=>({...f,oneOffMode:e.target.value}))} style={iStyle}><option value="supplement">Supplement</option><option value="override">Override</option></AppSelect>
                   <textarea value={assignmentForm.notes} onChange={e=>setAssignmentForm(f=>({...f,notes:e.target.value}))} placeholder="Notes / description" rows={2} style={{...iStyle,resize:"vertical",lineHeight:1.45}} />
                 </div>
               ) : null}
@@ -7098,8 +7155,8 @@ function ScheduleTab({ activeUser, currentUser, teamUsers = [], recurringWeeklyS
                 <div style={plannerInputGridStyle("1fr 1fr 1fr 1fr")}>
                   <input type="date" value={assignmentForm.dueDate} onChange={e=>setAssignmentForm(f=>({...f,dueDate:e.target.value}))} style={iStyle} />
                   <TimePicker value={assignmentForm.dueTime} onChange={value=>setAssignmentForm(f=>({...f,dueTime:value}))} allowEmpty storageFormat="24h" />
-                  <select value={assignmentForm.priority} onChange={e=>setAssignmentForm(f=>({...f,priority:e.target.value}))} style={iStyle}>{["Low","Normal","High","Urgent"].map(p=><option key={p}>{p}</option>)}</select>
-                  <select value={assignmentForm.status} onChange={e=>setAssignmentForm(f=>({...f,status:e.target.value}))} style={iStyle}>{["To Do","In Progress","Done"].map(s=><option key={s}>{s}</option>)}</select>
+                  <AppSelect value={assignmentForm.priority} onChange={e=>setAssignmentForm(f=>({...f,priority:e.target.value}))} style={iStyle}>{["Low","Normal","High","Urgent"].map(p=><option key={p}>{p}</option>)}</AppSelect>
+                  <AppSelect value={assignmentForm.status} onChange={e=>setAssignmentForm(f=>({...f,status:e.target.value}))} style={iStyle}>{["To Do","In Progress","Done"].map(s=><option key={s}>{s}</option>)}</AppSelect>
                 </div>
               ) : null}
               <div style={{display:"flex",gap:8,flexWrap:"wrap",justifyContent:isMobile?"stretch":"flex-end"}}>
@@ -7119,11 +7176,11 @@ function ScheduleTab({ activeUser, currentUser, teamUsers = [], recurringWeeklyS
             <div style={plannerSubheadingStyle}>Create supplemental or override assignments without leaving the planner.</div>
           </div>
           <div style={plannerInputGridStyle("1.15fr 0.95fr 0.9fr 0.9fr 0.9fr 1.15fr 1.15fr auto")}>
-            <select value={oneOffForm.userId} onChange={e=>setOneOffForm(f=>({...f,userId:e.target.value}))} style={iStyle}><option value="">Select User</option>{teamUsers.map(u=><option key={u.id} value={u.id}>{u.name}</option>)}</select>
+            <AppSelect value={oneOffForm.userId} onChange={e=>setOneOffForm(f=>({...f,userId:e.target.value}))} style={iStyle}><option value="">Select User</option>{teamUsers.map(u=><option key={u.id} value={u.id}>{u.name}</option>)}</AppSelect>
             <input type="date" value={oneOffForm.date} onChange={e=>setOneOffForm(f=>({...f,date:e.target.value}))} style={iStyle} />
             <TimePicker value={oneOffForm.start} onChange={value=>setOneOffForm(f=>({...f,start:value}))} />
             <TimePicker value={oneOffForm.end} onChange={value=>setOneOffForm(f=>({...f,end:value}))} />
-            <select value={oneOffForm.type} onChange={e=>setOneOffForm(f=>({...f,type:e.target.value}))} style={iStyle}><option value="supplement">Supplement</option><option value="override">Override</option></select>
+            <AppSelect value={oneOffForm.type} onChange={e=>setOneOffForm(f=>({...f,type:e.target.value}))} style={iStyle}><option value="supplement">Supplement</option><option value="override">Override</option></AppSelect>
             <input value={oneOffForm.title} onChange={e=>setOneOffForm(f=>({...f,title:e.target.value}))} placeholder="Title" style={iStyle} />
             <input value={oneOffForm.detail} onChange={e=>setOneOffForm(f=>({...f,detail:e.target.value}))} placeholder="Detail" style={iStyle} />
             <button onClick={saveOneOff} style={{...plannerActionButtonStyle("primary"),minHeight:isMobile?44:48}}>{oneOffEditId ? "Save" : "Add"}</button>
@@ -7231,15 +7288,15 @@ function ScheduleTab({ activeUser, currentUser, teamUsers = [], recurringWeeklyS
                 />
               </div>
               <div style={plannerInputGridStyle("repeat(5,minmax(0,1fr))")}>
-                <select value={taskForm.assignedUserId} onChange={e=>setTaskForm(f=>({...f,assignedUserId:e.target.value}))} style={iStyle}><option value="">Assign User</option>{teamUsers.map(u=><option key={u.id} value={u.id}>{u.name}</option>)}</select>
+                <AppSelect value={taskForm.assignedUserId} onChange={e=>setTaskForm(f=>({...f,assignedUserId:e.target.value}))} style={iStyle}><option value="">Assign User</option>{teamUsers.map(u=><option key={u.id} value={u.id}>{u.name}</option>)}</AppSelect>
                 <input type="date" value={taskForm.dueDate} onChange={e=>setTaskForm(f=>({...f,dueDate:e.target.value}))} style={iStyle} />
                 <TimePicker value={taskForm.dueTime} onChange={value=>setTaskForm(f=>({...f,dueTime:value}))} allowEmpty storageFormat="24h" />
-                <select value={taskForm.priority} onChange={e=>setTaskForm(f=>({...f,priority:e.target.value}))} style={iStyle}>{["Low","Normal","High","Urgent"].map(p=><option key={p}>{p}</option>)}</select>
-                <select value={taskForm.status} onChange={e=>setTaskForm(f=>({...f,status:e.target.value}))} style={iStyle}>{["To Do","In Progress","Done"].map(s=><option key={s}>{s}</option>)}</select>
+                <AppSelect value={taskForm.priority} onChange={e=>setTaskForm(f=>({...f,priority:e.target.value}))} style={iStyle}>{["Low","Normal","High","Urgent"].map(p=><option key={p}>{p}</option>)}</AppSelect>
+                <AppSelect value={taskForm.status} onChange={e=>setTaskForm(f=>({...f,status:e.target.value}))} style={iStyle}>{["To Do","In Progress","Done"].map(s=><option key={s}>{s}</option>)}</AppSelect>
               </div>
               <div style={plannerInputGridStyle("1fr 1fr")}>
-                <select value={taskForm.propertyId} onChange={e=>setTaskForm(f=>({...f,propertyId:e.target.value}))} style={iStyle}><option value="">Link Job (optional)</option>{properties.map(p=><option key={p.id} value={p.id}>{p.address}</option>)}</select>
-                <select value={taskForm.clientId} onChange={e=>setTaskForm(f=>({...f,clientId:e.target.value}))} style={iStyle}><option value="">Link Client (optional)</option>{clients.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}</select>
+                <AppSelect value={taskForm.propertyId} onChange={e=>setTaskForm(f=>({...f,propertyId:e.target.value}))} style={iStyle}><option value="">Link Job (optional)</option>{properties.map(p=><option key={p.id} value={p.id}>{p.address}</option>)}</AppSelect>
+                <AppSelect value={taskForm.clientId} onChange={e=>setTaskForm(f=>({...f,clientId:e.target.value}))} style={iStyle}><option value="">Link Client (optional)</option>{clients.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}</AppSelect>
               </div>
               <div style={{display:"flex",justifyContent:isMobile?"stretch":"flex-end"}}>
                 <button onClick={saveTask} style={{...plannerActionButtonStyle("primary"),width:isMobile?"100%":180,minHeight:46}}>{taskEditId ? "Save" : "Add"}</button>
@@ -7254,9 +7311,9 @@ function ScheduleTab({ activeUser, currentUser, teamUsers = [], recurringWeeklyS
               <div style={plannerHeadingStyle}>Assigned Tasks</div>
             </div>
             <div style={plannerInputGridStyle("repeat(5,minmax(0,1fr))")}>
-              <select value={taskUserFilter} onChange={e=>setTaskUserFilter(e.target.value)} style={iStyle}><option value="All">All Users</option>{teamUsers.map(u=><option key={u.id} value={u.id}>{u.name}</option>)}</select>
-              <select value={taskStatusFilter} onChange={e=>setTaskStatusFilter(e.target.value)} style={iStyle}><option value="All">All Statuses</option>{["To Do","In Progress","Done"].map(s=><option key={s}>{s}</option>)}</select>
-              <select value={taskPriorityFilter} onChange={e=>setTaskPriorityFilter(e.target.value)} style={iStyle}><option value="All">All Priorities</option>{["Low","Normal","High","Urgent"].map(p=><option key={p}>{p}</option>)}</select>
+              <AppSelect value={taskUserFilter} onChange={e=>setTaskUserFilter(e.target.value)} style={iStyle}><option value="All">All Users</option>{teamUsers.map(u=><option key={u.id} value={u.id}>{u.name}</option>)}</AppSelect>
+              <AppSelect value={taskStatusFilter} onChange={e=>setTaskStatusFilter(e.target.value)} style={iStyle}><option value="All">All Statuses</option>{["To Do","In Progress","Done"].map(s=><option key={s}>{s}</option>)}</AppSelect>
+              <AppSelect value={taskPriorityFilter} onChange={e=>setTaskPriorityFilter(e.target.value)} style={iStyle}><option value="All">All Priorities</option>{["Low","Normal","High","Urgent"].map(p=><option key={p}>{p}</option>)}</AppSelect>
               <input type="date" value={taskDateFilter} onChange={e=>setTaskDateFilter(e.target.value)} style={iStyle} />
               <button onClick={()=>{setTaskUserFilter("All");setTaskStatusFilter("All");setTaskPriorityFilter("All");setTaskDateFilter("")}} style={plannerActionButtonStyle()}>Reset</button>
             </div>
@@ -7276,8 +7333,8 @@ function ScheduleTab({ activeUser, currentUser, teamUsers = [], recurringWeeklyS
                 <div style={plannerSubheadingStyle}>Each day now groups shifts person-first so names appear once and schedule items stay nested underneath.</div>
               </div>
               <div style={plannerInputGridStyle("1.2fr 1fr 1fr 1fr 2fr auto")}>
-                <select value={recurringForm.userId} onChange={e=>setRecurringForm(f=>({...f,userId:e.target.value}))} style={iStyle}><option value="">Select User</option>{teamUsers.map(u=><option key={u.id} value={u.id}>{u.name}</option>)}</select>
-                <select value={recurringForm.day} onChange={e=>setRecurringForm(f=>({...f,day:e.target.value}))} style={iStyle}>{WEEK_DAYS.map(d=><option key={d}>{d}</option>)}</select>
+                <AppSelect value={recurringForm.userId} onChange={e=>setRecurringForm(f=>({...f,userId:e.target.value}))} style={iStyle}><option value="">Select User</option>{teamUsers.map(u=><option key={u.id} value={u.id}>{u.name}</option>)}</AppSelect>
+                <AppSelect value={recurringForm.day} onChange={e=>setRecurringForm(f=>({...f,day:e.target.value}))} style={iStyle}>{WEEK_DAYS.map(d=><option key={d}>{d}</option>)}</AppSelect>
                 <TimePicker value={recurringForm.start} onChange={value=>setRecurringForm(f=>({...f,start:value}))} />
                 <TimePicker value={recurringForm.end} onChange={value=>setRecurringForm(f=>({...f,end:value}))} />
                 <input value={recurringForm.note} onChange={e=>setRecurringForm(f=>({...f,note:e.target.value}))} placeholder="Optional note" style={iStyle} />
@@ -7589,13 +7646,13 @@ function PropertyPanel({prop,update,onClose,onPhotos,onRemovePhoto,onRenamePhoto
             </div>
           </Section>
           <Section label="PERMIT STATUS">
-            <select value={prop.permitStatus} onChange={e=>update(prop.id,"permitStatus",e.target.value)} style={{background:sm.bg,border:`1px solid ${sm.color}`,borderRadius:4,color:sm.color,fontSize:13,padding:"6px 10px",width:"100%",fontWeight:700,cursor:"pointer"}} disabled={!canEdit}>
+            <AppSelect value={prop.permitStatus} onChange={e=>update(prop.id,"permitStatus",e.target.value)} style={{background:sm.bg,border:`1px solid ${sm.color}`,borderRadius:4,color:sm.color,fontSize:13,padding:"6px 10px",width:"100%",fontWeight:700,cursor:"pointer"}} disabled={!canEdit}>
               {PERMIT_STATUSES.map(s=><option key={s}>{s}</option>)}
-            </select>
+            </AppSelect>
             {prop.permitStatus==="Started"&&<div style={{marginTop:6,fontFamily:"'IBM Plex Mono',monospace",fontSize:11,color:"#FBBF24"}}>Timer {fmt(prop.startedAt)} {fmtT(prop.startedAt)} - {hoursAgo(prop.startedAt)}h elapsed {parseFloat(hoursAgo(prop.startedAt))>20&&<span style={{color:"#F87171",marginLeft:8}}>NEAR DEADLINE</span>}</div>}
             {prop.permitStatus==="Submitted"&&<div style={{marginTop:8}}><Label>Submitted To</Label><input value={prop.submittedTo||""} onChange={e=>update(prop.id,"submittedTo",e.target.value)} placeholder="Name / email..." style={iStyle} disabled={!canEdit}/><Label style={{marginTop:8}}>Date Submitted</Label><input type="date" value={normalizeDateInput(prop.submittedDate)} onChange={e=>update(prop.id,"submittedDate",e.target.value)} style={iStyle} disabled={!canEdit}/></div>}
           </Section>
-          <Section label="WORK TYPE"><select value={prop.workType} onChange={e=>update(prop.id,"workType",e.target.value)} style={{background:"#1F2937",border:"1px solid #374151",borderRadius:4,color:"#F9FAFB",fontSize:13,padding:"6px 10px",width:"100%",cursor:"pointer"}} disabled={!canEdit}>{WORK_TYPES.map(w=><option key={w}>{w}</option>)}</select></Section>
+          <Section label="WORK TYPE"><AppSelect value={prop.workType} onChange={e=>update(prop.id,"workType",e.target.value)} style={{background:"#1F2937",border:"1px solid #374151",borderRadius:4,color:"#F9FAFB",fontSize:13,padding:"6px 10px",width:"100%",cursor:"pointer"}} disabled={!canEdit}>{WORK_TYPES.map(w=><option key={w}>{w}</option>)}</AppSelect></Section>
           <Section label="PERMIT INFORMATION"><Label>Demo Permit #</Label><input value={prop.permitNumber||""} onChange={e=>update(prop.id,"permitNumber",e.target.value)} placeholder="Harris County permit number..." style={iStyle} disabled={!canEdit}/><Label style={{marginTop:8}}>HCAD Account #</Label><input value={prop.hcadNumber||""} onChange={e=>update(prop.id,"hcadNumber",e.target.value)} placeholder="13-digit HCAD number..." style={{...iStyle,fontFamily:"'IBM Plex Mono',monospace"}} disabled={!canEdit}/></Section>
           <Section label="UTILITY DISCONNECTS">
             {[["electric","Electric","CenterPoint 713-207-2222"],["gas","Gas","Atmos 888-286-6700"],["water","Water","Houston Water 832-393-1000"]].map(([k,label,note])=>(
@@ -7770,9 +7827,9 @@ function PropertyPanel({prop,update,onClose,onPhotos,onRemovePhoto,onRenamePhoto
             <div style={{display:"grid",gridTemplateColumns:isMobile ? "1fr" : "repeat(2,minmax(0,1fr))",gap:10,marginBottom:12}}>
               <div>
                 <Label>Document Category</Label>
-                <select value={docCategory} onChange={e=>setDocCategory(e.target.value)} style={iStyle} disabled={!canEdit}>
+                <AppSelect value={docCategory} onChange={e=>setDocCategory(e.target.value)} style={iStyle} disabled={!canEdit}>
                   {DOCUMENT_CATEGORIES.map(item=><option key={item} value={item}>{item}</option>)}
-                </select>
+                </AppSelect>
               </div>
               <div>
                 <Label>Upload Notes</Label>
@@ -7890,13 +7947,13 @@ function PropertyPanel({prop,update,onClose,onPhotos,onRemovePhoto,onRenamePhoto
                         <div style={{display:"grid",gridTemplateColumns:isMobile?"1fr":"minmax(0,220px) 1fr",gap:10,alignItems:"start"}}>
                           <div style={{minWidth:0}}>
                             <Label>Category</Label>
-                            <select
+                            <AppSelect
                               value={documentEditForm.category}
                               onChange={e=>setDocumentEditForm(form=>({ ...form, category:e.target.value }))}
                               style={iStyle}
                             >
                               {DOCUMENT_CATEGORIES.map(item=><option key={item} value={item}>{item}</option>)}
-                            </select>
+                            </AppSelect>
                           </div>
                           <div style={{minWidth:0}}>
                             <Label>Notes</Label>
@@ -8241,16 +8298,16 @@ function BulkImportModal({ onClose, vendors, onImport }) {
                 gap:12,
                 marginBottom:16
               }}>
-                <select value={defaultWork} onChange={e=>setDefaultWork(e.target.value)} style={iStyle}>
+                <AppSelect value={defaultWork} onChange={e=>setDefaultWork(e.target.value)} style={iStyle}>
                   {WORK_TYPES.slice(1).map(w=><option key={w}>{w}</option>)}
-                </select>
+                </AppSelect>
 
                 <input value={woPrefix} onChange={e=>setWoPrefix(e.target.value.toUpperCase())} placeholder="WO Prefix" style={iStyle}/>
 
-                <select value={defaultVendor} onChange={e=>setDefaultVendor(e.target.value)} style={iStyle}>
+                <AppSelect value={defaultVendor} onChange={e=>setDefaultVendor(e.target.value)} style={iStyle}>
                   <option value="">Assign Contractor</option>
                   {vendors.map(v=><option key={v.id} value={v.id}>{v.company}</option>)}
-                </select>
+                </AppSelect>
               </div>
 
               {/* TEXTAREA */}
@@ -8308,13 +8365,13 @@ function BulkImportModal({ onClose, vendors, onImport }) {
                       style={{...iStyle,width:"100%",marginBottom:6}}
                     />
 
-                    <select
+                    <AppSelect
                       value={row.workType}
                       onChange={e=>updatePreviewRow(idx,"workType",e.target.value)}
                       style={{...iStyle,width:"100%",marginBottom:6}}
                     >
                       {WORK_TYPES.slice(1).map(w=><option key={w}>{w}</option>)}
-                    </select>
+                    </AppSelect>
 
                     <input
                       value={row.workOrderNumber||""}
@@ -8439,9 +8496,9 @@ function VendorTab({vendors,setVendors,canAdd=true,canEdit=true,canDelete=true,o
           width: isMobile ? "100%" : "auto"
         }}>
           <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search..." style={{...iStyle,width: isMobile ? "100%" : 200,fontSize:12}}/>
-          <select value={filter} onChange={e=>setFilter(e.target.value)} style={{...iStyle,width: isMobile ? "100%" : 160,fontSize:12}}>
+          <AppSelect value={filter} onChange={e=>setFilter(e.target.value)} style={{...iStyle,width: isMobile ? "100%" : 160,fontSize:12}}>
             {trades.map(t=><option key={t}>{t}</option>)}
-          </select>
+          </AppSelect>
         </div>
       </div>
 
@@ -8471,7 +8528,7 @@ function VendorTab({vendors,setVendors,canAdd=true,canEdit=true,canDelete=true,o
             marginBottom:12
           }}>
             <div><Label>Company *</Label><input value={form.company} onChange={e=>setForm(f=>({...f,company:e.target.value}))} style={iStyle}/></div>
-            <div><Label>Trade *</Label><select value={form.trade} onChange={e=>setForm(f=>({...f,trade:e.target.value}))} style={iStyle}>{CONTRACTOR_TRADES.map(t=><option key={t}>{t}</option>)}</select></div>
+            <div><Label>Trade *</Label><AppSelect value={form.trade} onChange={e=>setForm(f=>({...f,trade:e.target.value}))} style={iStyle}>{CONTRACTOR_TRADES.map(t=><option key={t}>{t}</option>)}</AppSelect></div>
             <div><Label>License #</Label><input value={form.license} onChange={e=>setForm(f=>({...f,license:e.target.value}))} style={iStyle}/></div>
             <div style={{display:"flex",alignItems:"flex-end"}}>
               <label style={{display:"flex",alignItems:"center",gap:6,fontSize:13,color:"#9CA3AF"}}>
@@ -8702,7 +8759,7 @@ function InspectorTab({inspectors,setInspectors,canAdd=true,canEdit=true,canDele
             marginBottom:12
           }}>
             <div><Label>Name *</Label><input value={form.name} onChange={e=>setForm(f=>({...f,name:e.target.value}))} style={iStyle}/></div>
-            <div><Label>Type</Label><select value={form.inspectorType} onChange={e=>setForm(f=>({...f,inspectorType:e.target.value}))} style={iStyle}>{INSPECTOR_TYPES.map(t=><option key={t}>{t}</option>)}</select></div>
+            <div><Label>Type</Label><AppSelect value={form.inspectorType} onChange={e=>setForm(f=>({...f,inspectorType:e.target.value}))} style={iStyle}>{INSPECTOR_TYPES.map(t=><option key={t}>{t}</option>)}</AppSelect></div>
             <div><Label>Agency</Label><input value={form.agency} onChange={e=>setForm(f=>({...f,agency:e.target.value}))} style={iStyle}/></div>
             <div><Label>Badge #</Label><input value={form.badge} onChange={e=>setForm(f=>({...f,badge:e.target.value}))} style={iStyle}/></div>
           </div>
@@ -8909,14 +8966,14 @@ function MileageTab({mileage,addMileage,setMileage,properties,clients,canAdd=tru
       <input value={activeForm.from} onChange={e=>setActiveForm(f=>({...f,from:e.target.value}))} list="prop-list" placeholder="From" style={iStyle}/>
       <input value={activeForm.to} onChange={e=>setActiveForm(f=>({...f,to:e.target.value}))} list="prop-list" placeholder="To" style={iStyle}/>
       <input value={activeForm.purpose} onChange={e=>setActiveForm(f=>({...f,purpose:e.target.value}))} placeholder="Purpose" style={iStyle}/>
-      <select value={activeForm.propertyId} onChange={e=>setActiveForm(f=>({...f,propertyId:e.target.value}))} style={iStyle}>
+      <AppSelect value={activeForm.propertyId} onChange={e=>setActiveForm(f=>({...f,propertyId:e.target.value}))} style={iStyle}>
         <option value="">Linked Property / Job</option>
         {properties.map(p=><option key={p.id} value={p.id}>{p.address}</option>)}
-      </select>
-      <select value={activeForm.clientId} onChange={e=>setActiveForm(f=>({...f,clientId:e.target.value}))} style={iStyle}>
+      </AppSelect>
+      <AppSelect value={activeForm.clientId} onChange={e=>setActiveForm(f=>({...f,clientId:e.target.value}))} style={iStyle}>
         <option value="">Linked Client</option>
         {(clients || []).map(c=><option key={c.id} value={c.id}>{c.name}</option>)}
-      </select>
+      </AppSelect>
       <textarea
         value={activeForm.notes}
         onChange={e=>setActiveForm(f=>({...f,notes:e.target.value}))}
@@ -9024,20 +9081,20 @@ function MileageTab({mileage,addMileage,setMileage,properties,clients,canAdd=tru
         marginBottom:16,
         flexWrap:"wrap"
       }}>
-        <select value={vehicleFilter} onChange={e=>setVehicleFilter(e.target.value)} style={iStyle}>
+        <AppSelect value={vehicleFilter} onChange={e=>setVehicleFilter(e.target.value)} style={iStyle}>
           <option value="">All Vehicles</option>
           {vehicles.map(v=><option key={v}>{v}</option>)}
-        </select>
+        </AppSelect>
 
-        <select value={driverFilter} onChange={e=>setDriverFilter(e.target.value)} style={iStyle}>
+        <AppSelect value={driverFilter} onChange={e=>setDriverFilter(e.target.value)} style={iStyle}>
           <option value="">All Drivers</option>
           {drivers.map(d=><option key={d}>{d}</option>)}
-        </select>
+        </AppSelect>
 
-        <select value={sortDir} onChange={e=>setSortDir(e.target.value)} style={iStyle}>
+        <AppSelect value={sortDir} onChange={e=>setSortDir(e.target.value)} style={iStyle}>
           <option value="desc">Newest First</option>
           <option value="asc">Oldest First</option>
-        </select>
+        </AppSelect>
       </div>
 
       {/* EMPTY */}
@@ -9222,17 +9279,49 @@ const modalSubtitleStyle = {
 }
 const iStyle = {
   background:"linear-gradient(180deg,#0F1824 0%,#0C131D 100%)",
-  border:"1px solid rgba(148,163,184,0.18)",
-  borderRadius:12,
+  border:"1px solid rgba(148,163,184,0.2)",
+  borderRadius:16,
   color:"#F5F8FF",
-  fontSize:13,
-  padding:"10px 13px",
+  fontSize:14,
+  padding:"13px 16px",
+  minHeight:52,
 
   width:"100%",
   maxWidth:"100%",
 
   fontFamily:"'Barlow',sans-serif",
-  boxShadow:"inset 0 1px 0 rgba(255,255,255,0.03), 0 8px 18px rgba(2,6,23,0.12)"
+  lineHeight:1.35,
+  boxShadow:"inset 0 1px 0 rgba(255,255,255,0.03), 0 10px 22px rgba(2,6,23,0.16)"
+}
+const createSelectControlStyle = (style = {}) => ({
+  ...style,
+  width:"100%",
+  minWidth:0,
+  paddingRight:44,
+  WebkitAppearance:"none",
+  MozAppearance:"none",
+  appearance:"none"
+})
+function AppSelect({ children, style, className="", shellStyle, ...props }) {
+  const layoutStyle = {}
+  const controlStyle = {}
+
+  Object.entries(style || {}).forEach(([key, value]) => {
+    if (SELECT_LAYOUT_KEYS.has(key)) layoutStyle[key] = value
+    else controlStyle[key] = value
+  })
+
+  return (
+    <div className="app-select-shell" style={{ ...layoutStyle, ...shellStyle }}>
+      <AppSelect
+        {...props}
+        className={["app-select-control", className].filter(Boolean).join(" ")}
+        style={createSelectControlStyle(controlStyle)}
+      >
+        {children}
+      </AppSelect>
+    </div>
+  )
 }
 const btnOrange={background:"linear-gradient(180deg,#FB923C,#EA580C)",color:"#FFF7ED",border:"1px solid #FDBA74",padding:"9px 13px",borderRadius:12,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:800,fontSize:13,letterSpacing:0.9,cursor:"pointer",boxShadow:"0 12px 24px rgba(249,115,22,0.24)"}
 const btnGray={background:"linear-gradient(180deg,#1A2A3D,#142131)",color:"#E2E8F0",border:"1px solid rgba(148,163,184,0.22)",padding:"9px 13px",borderRadius:12,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700,fontSize:13,letterSpacing:0.9,cursor:"pointer",boxShadow:"0 10px 22px rgba(5,10,20,0.18)"}
