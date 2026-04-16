@@ -1896,7 +1896,61 @@ const PAGE_KEYS = ["home","dashboard","invoices","team","chat","clients","schedu
 const ACTION_KEYS = ["view","add","edit","delete"]
 const fullPerms = () => ({ view:true, add:true, edit:true, delete:true })
 const viewOnlyPerms = () => ({ view:true, add:false, edit:false, delete:false })
-const defaultRolePermissions = () => ({
+export const normalizeRoleKey = (role = "") => {
+  const clean = String(role || "")
+    .replace(/[_-]+/g, " ")
+    .replace(/\s*\/\s*/g, " / ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLowerCase()
+  return clean || "member"
+}
+export const normalizeRoleList = (roles = []) => {
+  const ordered = Array.isArray(roles) ? roles : []
+  const seen = new Set()
+  const out = []
+  ordered.forEach(role => {
+    const clean = normalizeRoleKey(role)
+    if (!clean || seen.has(clean)) return
+    seen.add(clean)
+    out.push(clean)
+  })
+  if (!seen.has("ceo")) out.unshift("ceo")
+  if (!seen.has("member")) out.push("member")
+  return out
+}
+export const normalizePagePermissions = (pagePermissions = {}, fallback = fullPerms()) => ({
+  view: pagePermissions?.view === undefined ? fallback.view !== false : pagePermissions.view !== false,
+  add: pagePermissions?.add === undefined ? fallback.add !== false : pagePermissions.add !== false,
+  edit: pagePermissions?.edit === undefined ? fallback.edit !== false : pagePermissions.edit !== false,
+  delete: pagePermissions?.delete === undefined ? fallback.delete !== false : pagePermissions.delete !== false
+})
+export const normalizeRolePermissionsMap = (rolePermissions = {}, roleList = []) => {
+  const base = defaultRolePermissions()
+  const roles = normalizeRoleList([
+    ...Object.keys(rolePermissions || {}),
+    ...Object.keys(base),
+    ...roleList
+  ])
+  const out = {}
+  roles.forEach(role => {
+    const fallbackRolePerms = base[role] || Object.fromEntries(PAGE_KEYS.map(page => [page, fullPerms()]))
+    out[role] = {}
+    PAGE_KEYS.forEach(page => {
+      const fallbackPagePerms = fallbackRolePerms?.[page] || fullPerms()
+      out[role][page] = normalizePagePermissions(rolePermissions?.[role]?.[page], fallbackPagePerms)
+    })
+  })
+  return out
+}
+export const hasPermission = (user, team, page, action = "view") => {
+  if (!user || !team || !PAGE_KEYS.includes(page) || !ACTION_KEYS.includes(action)) return false
+  const role = normalizeRoleKey(user.role || "member")
+  if (role === "ceo") return true
+  const permissions = normalizeRolePermissionsMap(team.rolePermissions || {}, team.roles || [])
+  return permissions?.[role]?.[page]?.[action] !== false
+}
+export const defaultRolePermissions = () => ({
   ceo:        Object.fromEntries(PAGE_KEYS.map(p=>[p, fullPerms()])),
   management: Object.fromEntries(PAGE_KEYS.map(p=>[p, fullPerms()])),
   operations: Object.fromEntries(PAGE_KEYS.map(p=>[p, fullPerms()])),
@@ -1912,7 +1966,7 @@ const buildSingleCompanyAuthState = (storedUsers = [], storedTeams = []) => {
     .map(u=>({
       ...u,
       teamId:FIXED_TEAM_ID,
-      role:u.role||"member",
+      role:normalizeRoleKey(u.role || "member"),
       activeSessionId:u.activeSessionId||null,
       approved:u.approved !== false,
       mustResetPassword: !!u.mustResetPassword,
@@ -1926,7 +1980,7 @@ const buildSingleCompanyAuthState = (storedUsers = [], storedTeams = []) => {
       userId:u.id,
       name:u.name,
       email:u.email,
-      role:u.role || "member",
+      role:normalizeRoleKey(u.role || "member"),
       requestedAt:u.createdAt || now()
     }))
   const members = baseUsers.filter(u=>u.teamId===FIXED_TEAM_ID && u.approved).map(u=>u.id)
@@ -1938,28 +1992,10 @@ const buildSingleCompanyAuthState = (storedUsers = [], storedTeams = []) => {
     ...normalizeCompanySettings(storedMainTeam),
     members:[...new Set(members)],
     pendingRequests,
-    roles:Array.isArray(storedMainTeam?.roles) && storedMainTeam.roles.length
+    roles: normalizeRoleList(Array.isArray(storedMainTeam?.roles) && storedMainTeam.roles.length
       ? storedMainTeam.roles
-      : ["ceo","management","operations","member"],
-    rolePermissions: (() => {
-      const base = defaultRolePermissions()
-      const stored = storedMainTeam?.rolePermissions || {}
-      const out = { ...base }
-      Object.keys(stored || {}).forEach(role=>{
-        out[role] = out[role] || Object.fromEntries(PAGE_KEYS.map(p=>[p, fullPerms()]))
-        PAGE_KEYS.forEach(page=>{
-          const existing = stored?.[role]?.[page]
-          if (!existing) return
-          out[role][page] = {
-            view: existing.view !== false,
-            add: existing.add !== false,
-            edit: existing.edit !== false,
-            delete: existing.delete !== false
-          }
-        })
-      })
-      return out
-    })()
+      : ["ceo","management","operations","member"]),
+    rolePermissions: normalizeRolePermissionsMap(storedMainTeam?.rolePermissions || {}, storedMainTeam?.roles || [])
   }]
   return { normalizedUsers:baseUsers, normalizedTeams }
 }
@@ -2435,8 +2471,8 @@ export default function JLCMSApp() {
               }),
               members: [],
               pendingRequests: [],
-              roles: Array.isArray(workspace.roles) ? workspace.roles : ["ceo","management","operations","member"],
-              rolePermissions: workspace.role_permissions || defaultRolePermissions()
+              roles: normalizeRoleList(Array.isArray(workspace.roles) ? workspace.roles : ["ceo","management","operations","member"]),
+              rolePermissions: normalizeRolePermissionsMap(workspace.role_permissions || {}, workspace.roles || [])
             }]
         const { normalizedUsers, normalizedTeams } = buildSingleCompanyAuthState(remoteUsers, remoteTeams)
 
@@ -2595,8 +2631,8 @@ export default function JLCMSApp() {
       payment_terms: mainTeam.paymentTerms || DEFAULT_COMPANY_SETTINGS.paymentTerms,
       accepted_payment_methods: mainTeam.acceptedPaymentMethods || DEFAULT_COMPANY_SETTINGS.acceptedPaymentMethods,
       payment_instructions: mainTeam.paymentInstructions || DEFAULT_COMPANY_SETTINGS.paymentInstructions,
-      roles: mainTeam.roles || ["ceo","management","operations","member"],
-      role_permissions: mainTeam.rolePermissions || defaultRolePermissions()
+      roles: normalizeRoleList(mainTeam.roles || ["ceo","management","operations","member"]),
+      role_permissions: normalizeRolePermissionsMap(mainTeam.rolePermissions || {}, mainTeam.roles || [])
     }).catch(error => {
       console.error("Supabase team settings sync failed.", error)
     })
@@ -2981,8 +3017,8 @@ export default function JLCMSApp() {
       ...DEFAULT_COMPANY_SETTINGS,
       members:[nextUser.id],
       pendingRequests:[],
-      roles:["ceo","management","operations","member"],
-      rolePermissions: defaultRolePermissions()
+      roles:normalizeRoleList(["ceo","management","operations","member"]),
+      rolePermissions: normalizeRolePermissionsMap(defaultRolePermissions(), ["ceo","management","operations","member"])
     }
     setUsers([nextUser])
     setTeams([nextTeam])
@@ -3057,6 +3093,7 @@ export default function JLCMSApp() {
   }
 
   const approveTeamRequest = (teamIdValue, userIdValue) => {
+    if (!hasPermission(currentUser, currentTeam, "team", "edit")) return { ok:false, error:"You do not have permission to approve team access." }
     const targetUser = users.find(u=>u.id===userIdValue)
     const nextUser = targetUser ? { ...targetUser, approved:true } : null
     setUsers(prev=>prev.map(u=>u.id!==userIdValue?u:{...u, approved:true}))
@@ -3071,9 +3108,11 @@ export default function JLCMSApp() {
         console.error("Supabase user approval sync failed.", error)
       })
     }
+    return { ok:true }
   }
 
   const denyTeamRequest = (teamIdValue, userIdValue) => {
+    if (!hasPermission(currentUser, currentTeam, "team", "edit")) return { ok:false, error:"You do not have permission to deny team access." }
     setUsers(prev=>prev.filter(u=>u.id!==userIdValue))
     setTeams(prev=>prev.map(t=>t.teamId!==teamIdValue?t:{...t,pendingRequests:(t.pendingRequests||[]).filter(r=>r.userId!==userIdValue)}))
     setMessages(prev=>prev.filter(m=>m.senderId!==userIdValue && m.toUserId!==userIdValue))
@@ -3084,9 +3123,11 @@ export default function JLCMSApp() {
     deleteSupabaseUser(userIdValue).catch(error => {
       console.error("Supabase denied user cleanup failed.", error)
     })
+    return { ok:true }
   }
 
   const updateTeamInviteCode = (newCode) => {
+    if (!isCurrentCeo) return { ok:false, error:"Only the CEO can update the invite code." }
     const clean = String(newCode || "").trim().toUpperCase().replace(/\s+/g,"")
     if (!clean) return { ok:false, error:"Invite code cannot be empty." }
     if (clean.length < 4) return { ok:false, error:"Invite code must be at least 4 characters." }
@@ -3095,7 +3136,8 @@ export default function JLCMSApp() {
   }
 
   const forceLogoutTeamUser = (userIdValue) => {
-    if (!userIdValue) return
+    if (!hasPermission(currentUser, currentTeam, "team", "edit")) return { ok:false, error:"You do not have permission to force logout users." }
+    if (!userIdValue) return { ok:false, error:"User not found." }
     const targetUser = users.find(u=>u.id===userIdValue)
     const nextUser = targetUser ? { ...targetUser, activeSessionId:null } : null
     setUsers(prev=>prev.map(u=>u.id!==userIdValue?u:{...u,activeSessionId:null}))
@@ -3108,10 +3150,12 @@ export default function JLCMSApp() {
         console.error("Supabase force logout sync failed.", error)
       })
     }
+    return { ok:true }
   }
 
   const removeTeamUser = (userIdValue) => {
-    if (!userIdValue) return
+    if (!isCurrentCeo) return { ok:false, error:"Only the CEO can remove users." }
+    if (!userIdValue) return { ok:false, error:"User not found." }
     setUsers(prev=>prev.filter(u=>u.id!==userIdValue))
     setTeams(prev=>prev.map(t=>t.teamId!==FIXED_TEAM_ID?t:{
       ...t,
@@ -3126,6 +3170,7 @@ export default function JLCMSApp() {
     deleteSupabaseUser(userIdValue).catch(error => {
       console.error("Supabase user removal failed.", error)
     })
+    return { ok:true }
   }
 
   const updateCurrentProfile = (updates) => {
@@ -3290,59 +3335,65 @@ export default function JLCMSApp() {
 
   const createTeamRole = (roleName) => {
     if (!isCurrentCeo) return { ok:false, error:"Only the CEO can create roles." }
-    const clean = String(roleName||"").trim().toLowerCase()
+    const clean = normalizeRoleKey(roleName)
     if (!clean) return { ok:false, error:"Role name cannot be empty." }
     if (clean==="ceo") return { ok:false, error:"Role reserved." }
-    if (currentTeam?.roles?.includes(clean)) return { ok:false, error:"Role already exists." }
-    setTeams(prev=>prev.map(t=>t.teamId!==FIXED_TEAM_ID?t:{...t,roles:[...(t.roles||[]), clean]}))
+    if ((currentTeam?.roles || []).map(normalizeRoleKey).includes(clean)) return { ok:false, error:"Role already exists." }
+    setTeams(prev=>prev.map(t=>t.teamId!==FIXED_TEAM_ID?t:{
+      ...t,
+      roles:normalizeRoleList([...(t.roles||[]), clean]),
+      rolePermissions:normalizeRolePermissionsMap({
+        ...(t.rolePermissions || {}),
+        [clean]: Object.fromEntries(PAGE_KEYS.map(page => [page, fullPerms()]))
+      }, [...(t.roles || []), clean])
+    }))
     return { ok:true }
   }
 
   const renameTeamRole = (oldRole, newRole) => {
     if (!isCurrentCeo) return { ok:false, error:"Only the CEO can rename roles." }
-    const from = String(oldRole||"").trim().toLowerCase()
-    const to = String(newRole||"").trim().toLowerCase()
+    const from = normalizeRoleKey(oldRole)
+    const to = normalizeRoleKey(newRole)
     if (!from || !to) return { ok:false, error:"Role name cannot be empty." }
     if (from==="ceo" || to==="ceo") return { ok:false, error:"CEO role is fixed." }
-    if (!currentTeam?.roles?.includes(from)) return { ok:false, error:"Role not found." }
-    if (currentTeam?.roles?.includes(to)) return { ok:false, error:"Role already exists." }
+    if (!(currentTeam?.roles || []).map(normalizeRoleKey).includes(from)) return { ok:false, error:"Role not found." }
+    if ((currentTeam?.roles || []).map(normalizeRoleKey).includes(to)) return { ok:false, error:"Role already exists." }
 
-    setUsers(prev=>prev.map(u=>u.role===from?{...u,role:to}:u))
+    setUsers(prev=>prev.map(u=>normalizeRoleKey(u.role)===from?{...u,role:to}:u))
     setTeams(prev=>prev.map(t=>{
       if (t.teamId!==FIXED_TEAM_ID) return t
-      const nextRoles = (t.roles||[]).map(r=>r===from?to:r)
+      const nextRoles = normalizeRoleList((t.roles||[]).map(r=>normalizeRoleKey(r)===from?to:r))
       const rp = { ...(t.rolePermissions||defaultRolePermissions()) }
       if (rp[from]) {
         rp[to] = { ...(rp[to] || {}), ...rp[from] }
         delete rp[from]
       }
-      return { ...t, roles:nextRoles, rolePermissions:rp }
+      return { ...t, roles:nextRoles, rolePermissions:normalizeRolePermissionsMap(rp, nextRoles) }
     }))
     return { ok:true }
   }
 
   const deleteTeamRole = (role) => {
     if (!isCurrentCeo) return { ok:false, error:"Only the CEO can delete roles." }
-    const clean = String(role||"").trim().toLowerCase()
+    const clean = normalizeRoleKey(role)
     if (!clean || clean==="ceo") return { ok:false, error:"CEO role is fixed." }
-    if (!currentTeam?.roles?.includes(clean)) return { ok:false, error:"Role not found." }
-    setUsers(prev=>prev.map(u=>u.role===clean?{...u,role:"member"}:u))
+    if (!(currentTeam?.roles || []).map(normalizeRoleKey).includes(clean)) return { ok:false, error:"Role not found." }
+    setUsers(prev=>prev.map(u=>normalizeRoleKey(u.role)===clean?{...u,role:"member"}:u))
     setTeams(prev=>prev.map(t=>{
       if (t.teamId!==FIXED_TEAM_ID) return t
-      const nextRoles = (t.roles||[]).filter(r=>r!==clean)
+      const nextRoles = normalizeRoleList((t.roles||[]).filter(r=>normalizeRoleKey(r)!==clean))
       const rp = { ...(t.rolePermissions||defaultRolePermissions()) }
       delete rp[clean]
-      return { ...t, roles:nextRoles, rolePermissions:rp }
+      return { ...t, roles:nextRoles, rolePermissions:normalizeRolePermissionsMap(rp, nextRoles) }
     }))
     return { ok:true }
   }
 
   const assignUserRole = (userIdValue, role) => {
-    const roleLower = String(currentUser?.role || "").toLowerCase()
-    if (!["ceo","admin","management"].includes(roleLower)) return { ok:false, error:"Only CEO, Admin, or Management can assign roles." }
-    const cleanRole = String(role||"").trim().toLowerCase()
+    if (!hasPermission(currentUser, currentTeam, "team", "edit")) return { ok:false, error:"You do not have permission to assign roles." }
+    const cleanRole = normalizeRoleKey(role)
     if (!cleanRole) return { ok:false, error:"Invalid role." }
-    if (!currentTeam?.roles?.includes(cleanRole) && cleanRole!=="ceo") return { ok:false, error:"Role not in team role list." }
+    if (!(currentTeam?.roles || []).map(normalizeRoleKey).includes(cleanRole) && cleanRole!=="ceo") return { ok:false, error:"Role not in team role list." }
     const targetUser = users.find(u=>u.id===userIdValue)
     setUsers(prev=>prev.map(u=>u.id!==userIdValue?u:{...u,role:cleanRole}))
     if (targetUser) {
@@ -3356,14 +3407,14 @@ export default function JLCMSApp() {
   const updateRolePermission = (role, page, action, value) => {
     if (!isCurrentCeo) return { ok:false, error:"Only the CEO can change permissions." }
     if (!PAGE_KEYS.includes(page) || !ACTION_KEYS.includes(action)) return { ok:false, error:"Invalid permission target." }
-    const cleanRole = String(role||"").trim().toLowerCase()
+    const cleanRole = normalizeRoleKey(role)
     if (!cleanRole) return { ok:false, error:"Invalid role." }
     setTeams(prev=>prev.map(t=>{
       if (t.teamId!==FIXED_TEAM_ID) return t
       const rp = { ...(t.rolePermissions || defaultRolePermissions()) }
       if (!rp[cleanRole]) rp[cleanRole] = Object.fromEntries(PAGE_KEYS.map(p=>[p, fullPerms()]))
       rp[cleanRole] = { ...rp[cleanRole], [page]: { ...(rp[cleanRole][page] || fullPerms()), [action]: !!value } }
-      return { ...t, rolePermissions: rp }
+      return { ...t, rolePermissions: normalizeRolePermissionsMap(rp, t.roles || []) }
     }))
     return { ok:true }
   }
@@ -3547,20 +3598,13 @@ export default function JLCMSApp() {
   const currentTeam = currentUser ? teams.find(t=>t.teamId===currentUser.teamId) : null
   const todayFocusMessage = String(currentTeam?.todayFocusCustom || "").trim() || getDailyTodayFocus(getTodayDateInput())
   const teamUsers = users.filter(u=>u.teamId===currentUser?.teamId && u.approved)
-  const isCurrentAdmin = currentUser ? ["admin","ceo","management"].includes((currentUser.role||"").toLowerCase()) : false
-  const isCurrentCeo = currentUser ? (currentUser.role||"").toLowerCase()==="ceo" : false
+  const isCurrentAdmin = currentUser ? hasPermission(currentUser, currentTeam, "team", "edit") : false
+  const isCurrentCeo = currentUser ? normalizeRoleKey(currentUser.role)==="ceo" : false
   const showRoleRequiredAlert = useCallback(() => {
     window.alert("You currently have view-only access. Ask management or the CEO to assign your role and permissions.")
   }, [])
   const can = useCallback((page, action="view") => {
-    if (!currentUser || !currentTeam) return false
-    if ((currentUser.role||"").toLowerCase()==="ceo") return true
-    const role = (currentUser.role || "member").toLowerCase()
-    if (role==="member" && action!=="view") return false
-    const rp = currentTeam.rolePermissions || {}
-    const pagePerm = rp?.[role]?.[page]
-    if (!pagePerm) return true
-    return pagePerm[action] !== false
+    return hasPermission(currentUser, currentTeam, page, action)
   }, [currentUser, currentTeam])
 
   const markJobComplete = useCallback((propId) => {
@@ -4597,7 +4641,7 @@ export default function JLCMSApp() {
       
       
       {/* == SCHEDULE TAB == */}
-      {tab==="schedule"&&(can("schedule","view") ? <ScheduleTab activeUser={activeUser} currentUser={currentUser} teamUsers={teamUsers} notifications={notifications} fireNotif={fireNotif} recurringWeeklySchedule={recurringWeeklySchedule} setRecurringWeeklySchedule={setRecurringWeeklySchedule} oneOffScheduleBlocks={oneOffScheduleBlocks} setOneOffScheduleBlocks={setOneOffScheduleBlocks} tasks={tasks} setTasks={setTasks} properties={props} clients={clients} canAdd={can("schedule","add")} canEdit={can("schedule","edit")} canDelete={can("schedule","delete")} canManagePermanent={can("permanentSchedule","add")} onImmediateOneTimeAlert={notifyCurrentUserOneTimeEvent} /> : <AccessDenied page="Schedule" />)}
+      {tab==="schedule"&&(can("schedule","view") ? <ScheduleTab activeUser={activeUser} currentUser={currentUser} teamUsers={teamUsers} notifications={notifications} fireNotif={fireNotif} recurringWeeklySchedule={recurringWeeklySchedule} setRecurringWeeklySchedule={setRecurringWeeklySchedule} oneOffScheduleBlocks={oneOffScheduleBlocks} setOneOffScheduleBlocks={setOneOffScheduleBlocks} tasks={tasks} setTasks={setTasks} properties={props} clients={clients} canAdd={can("schedule","add")} canEdit={can("schedule","edit")} canDelete={can("schedule","delete")} canPermanentAdd={can("permanentSchedule","add")} canPermanentEdit={can("permanentSchedule","edit")} canPermanentDelete={can("permanentSchedule","delete")} onImmediateOneTimeAlert={notifyCurrentUserOneTimeEvent} /> : <AccessDenied page="Schedule" />)}
 
 
       {tab==="vendors"&&(can("vendors","view") ? <VendorTab vendors={vendors} setVendors={setVendors} canAdd={can("vendors","add")} canEdit={can("vendors","edit")} canDelete={can("vendors","delete")} onSaveVendor={saveVendorRecord} onDeleteVendor={removeVendorRecord} /> : <AccessDenied page="Vendors" />)}
@@ -5930,7 +5974,7 @@ function MoreTab({ currentUser, currentTeam, users, isCurrentAdmin, isCurrentCeo
       if ((b.role||"").toLowerCase()==="ceo") return 1
       return 0
     })
-  const canAssignRoles = ["ceo","admin","management"].includes(String(currentUser?.role || "").toLowerCase())
+  const canAssignRoles = !!isCurrentAdmin
 
   useEffect(() => {
     setInviteInput(currentTeam?.inviteCode || "")
@@ -6521,15 +6565,19 @@ function TimePicker({ value, onChange, style, allowEmpty=false, storageFormat="1
 }
 
 /* -------------------------- SCHEDULE TAB -------------------------- */
-function ScheduleTab({ activeUser, currentUser, teamUsers = [], recurringWeeklySchedule = [], setRecurringWeeklySchedule, oneOffScheduleBlocks = [], setOneOffScheduleBlocks, tasks = [], setTasks, properties = [], clients = [], canAdd=true, canEdit=true, canDelete=true, canManagePermanent=false, fireNotif, onImmediateOneTimeAlert }) {
+function ScheduleTab({ activeUser, currentUser, teamUsers = [], recurringWeeklySchedule = [], setRecurringWeeklySchedule, oneOffScheduleBlocks = [], setOneOffScheduleBlocks, tasks = [], setTasks, properties = [], clients = [], canAdd=true, canEdit=true, canDelete=true, canPermanentAdd=true, canPermanentEdit=true, canPermanentDelete=true, fireNotif, onImmediateOneTimeAlert }) {
   const { isPhone: isMobile, isDesktop, isWideDesktop } = viewportInfo()
   const sectionGap = isMobile ? 8 : 10
   const sectionMargin = isMobile ? 12 : 16
-  const userRole = String(currentUser?.role || "").toLowerCase()
-  const isManagerRole = ["ceo","admin","management"].includes(userRole)
-  const canManageSchedule = isManagerRole && canAdd
-  const canManageRecurring = canManageSchedule && canManagePermanent
-  const canManageTasks = canManageSchedule
+  const canCreateSchedule = canAdd
+  const canEditSchedule = canEdit
+  const canDeleteSchedule = canDelete
+  const canCreateRecurring = canPermanentAdd
+  const canEditRecurring = canPermanentEdit
+  const canDeleteRecurring = canPermanentDelete
+  const canCreateTasks = canAdd
+  const canEditTasks = canEdit
+  const canDeleteTasks = canDelete
   const [view, setView] = useState("mine")
 
   const localNow = new Date()
@@ -6618,7 +6666,7 @@ function ScheduleTab({ activeUser, currentUser, teamUsers = [], recurringWeeklyS
     .slice(0,6)
 
   const saveRecurring = () => {
-    if (!canManageRecurring) { denyAccess(); return }
+    if (recurringEditId ? !canEditRecurring : !canCreateRecurring) { denyAccess(); return }
     if (!recurringForm.userId || !recurringForm.day || !recurringForm.start || !recurringForm.end) return
     const payload = { id: recurringEditId || uid(), userId: recurringForm.userId, day: recurringForm.day, start: recurringForm.start, end: recurringForm.end, note: recurringForm.note.trim(), createdBy: currentUser?.id || "", createdAt: recurringEditId ? (recurringWeeklySchedule.find(x=>x.id===recurringEditId)?.createdAt || now()) : now(), updatedAt: now() }
     setRecurringWeeklySchedule(prev=> recurringEditId ? prev.map(x=>x.id===recurringEditId ? payload : x) : [...prev, payload])
@@ -6657,12 +6705,12 @@ function ScheduleTab({ activeUser, currentUser, teamUsers = [], recurringWeeklyS
     setAssignmentOpen(true)
   }
   const removeRecurring = (id) => {
-    if (!canManageRecurring || !canDelete) { denyAccess(); return }
+    if (!canDeleteRecurring) { denyAccess(); return }
     setRecurringWeeklySchedule(prev=>prev.filter(x=>x.id!==id))
   }
 
   const saveOneOff = () => {
-    if (!canManageSchedule) { denyAccess(); return }
+    if (oneOffEditId ? !canEditSchedule : !canCreateSchedule) { denyAccess(); return }
     if (!oneOffForm.userId || !oneOffForm.date || !oneOffForm.start || !oneOffForm.end || !oneOffForm.title.trim()) return
     const payload = { id: oneOffEditId || uid(), userId: oneOffForm.userId, date: oneOffForm.date, start: oneOffForm.start, end: oneOffForm.end, title: oneOffForm.title.trim(), detail: oneOffForm.detail.trim(), type: oneOffForm.type || "supplement", createdBy: currentUser?.id || "", createdAt: oneOffEditId ? (oneOffScheduleBlocks.find(x=>x.id===oneOffEditId)?.createdAt || now()) : now(), updatedAt: now() }
     setOneOffScheduleBlocks(prev=> oneOffEditId ? prev.map(x=>x.id===oneOffEditId ? payload : x) : [...prev, payload])
@@ -6702,12 +6750,12 @@ function ScheduleTab({ activeUser, currentUser, teamUsers = [], recurringWeeklyS
     setView("team")
   }
   const removeOneOff = (id) => {
-    if (!canManageSchedule || !canDelete) { denyAccess(); return }
+    if (!canDeleteSchedule) { denyAccess(); return }
     setOneOffScheduleBlocks(prev=>prev.filter(x=>x.id!==id))
   }
 
   const saveTask = () => {
-    if (!canManageTasks) { denyAccess(); return }
+    if (taskEditId ? !canEditTasks : !canCreateTasks) { denyAccess(); return }
     if (!taskForm.title.trim() || !taskForm.assignedUserId || !taskForm.dueDate) return
     const editingTask = taskEditId ? tasks.find(x=>x.id===taskEditId) : null
     const assignmentChanged = !editingTask || editingTask.assignedUserId!==taskForm.assignedUserId
@@ -6765,7 +6813,7 @@ function ScheduleTab({ activeUser, currentUser, teamUsers = [], recurringWeeklyS
     setView("tasks")
   }
   const removeTask = (id) => {
-    if (!canDelete) { denyAccess(); return }
+    if (!canDeleteTasks) { denyAccess(); return }
     setTasks(prev=>prev.filter(x=>x.id!==id))
   }
   const resetAssignmentEditor = (type="oneoff") => {
@@ -6791,10 +6839,9 @@ function ScheduleTab({ activeUser, currentUser, teamUsers = [], recurringWeeklyS
     })
   }
   const saveAssignment = () => {
-    if (!canManageSchedule) { denyAccess(); return }
     if (!assignmentForm.userId) return
     if (assignmentForm.type==="recurring") {
-      if (!canManageRecurring) { denyAccess(); return }
+      if (recurringEditId ? !canEditRecurring : !canCreateRecurring) { denyAccess(); return }
       const days = Array.isArray(assignmentForm.days) && assignmentForm.days.length ? assignmentForm.days : [todayDay]
       if (!assignmentForm.start || !assignmentForm.end) return
       const assignmentStamp = now()
@@ -6823,6 +6870,7 @@ function ScheduleTab({ activeUser, currentUser, teamUsers = [], recurringWeeklyS
       return
     }
     if (assignmentForm.type==="oneoff") {
+      if (oneOffEditId ? !canEditSchedule : !canCreateSchedule) { denyAccess(); return }
       if (!assignmentForm.date || !assignmentForm.start || !assignmentForm.end || !assignmentForm.title.trim()) return
       const payload = { id: oneOffEditId || uid(), userId: assignmentForm.userId, date: assignmentForm.date, start: assignmentForm.start, end: assignmentForm.end, title: assignmentForm.title.trim(), detail: assignmentForm.notes.trim(), type: assignmentForm.oneOffMode || "supplement", createdBy: currentUser?.id || "", createdAt: oneOffEditId ? (oneOffScheduleBlocks.find(x=>x.id===oneOffEditId)?.createdAt || now()) : now(), updatedAt: now() }
       setOneOffScheduleBlocks(prev=> oneOffEditId ? prev.map(x=>x.id===oneOffEditId ? payload : x) : [...prev, payload])
@@ -6839,6 +6887,7 @@ function ScheduleTab({ activeUser, currentUser, teamUsers = [], recurringWeeklyS
       resetAssignmentEditor("oneoff")
       return
     }
+    if (taskEditId ? !canEditTasks : !canCreateTasks) { denyAccess(); return }
     if (!assignmentForm.title.trim() || !assignmentForm.dueDate) return
     const editingTask = taskEditId ? tasks.find(x=>x.id===taskEditId) : null
     const assignmentChanged = !editingTask || editingTask.assignedUserId!==assignmentForm.userId
@@ -6856,7 +6905,7 @@ function ScheduleTab({ activeUser, currentUser, teamUsers = [], recurringWeeklyS
     setAssignmentOpen(false)
     resetAssignmentEditor("task")
   }
-  const canUpdateTaskStatus = (task) => canEdit || task.assignedUserId===currentUser?.id
+  const canUpdateTaskStatus = (task) => canEditTasks || task.assignedUserId===currentUser?.id
   const updateTaskStatus = (id, status) => {
     const target = tasks.find(t=>t.id===id)
     if (!target || !canUpdateTaskStatus(target)) return
@@ -7109,8 +7158,8 @@ function ScheduleTab({ activeUser, currentUser, teamUsers = [], recurringWeeklyS
           </div>
           <div style={{display:"flex",gap:8,flexWrap:"wrap",alignItems:"stretch"}}>
             <AppSelect value={task.status} onChange={e=>updateTaskStatus(task.id, e.target.value)} style={{...iStyle,padding:"8px 10px",fontSize:12,width:isMobile?"100%":132,flex:isMobile ? "1 1 100%" : "0 0 auto"}} disabled={!canUpdateTaskStatus(task)}>{["To Do","In Progress","Done"].map(s=><option key={s}>{s}</option>)}</AppSelect>
-            {(canManageTasks || canEdit) && <button onClick={()=>editTask(task)} style={{...plannerActionButtonStyle("primary"),flex:isMobile ? "1 1 0" : "0 0 auto"}}>Edit</button>}
-            {canDelete && <button onClick={()=>removeTask(task.id)} style={{...plannerActionButtonStyle("danger"),flex:isMobile ? "1 1 0" : "0 0 auto"}}>Delete</button>}
+            {canEditTasks && <button onClick={()=>editTask(task)} style={{...plannerActionButtonStyle("primary"),flex:isMobile ? "1 1 0" : "0 0 auto"}}>Edit</button>}
+            {canDeleteTasks && <button onClick={()=>removeTask(task.id)} style={{...plannerActionButtonStyle("danger"),flex:isMobile ? "1 1 0" : "0 0 auto"}}>Delete</button>}
           </div>
         </div>
       </div>
@@ -7158,7 +7207,7 @@ function ScheduleTab({ activeUser, currentUser, teamUsers = [], recurringWeeklyS
             <div style={{fontSize:13,color:"#8FA3B8",marginTop:6,lineHeight:1.5}}>{plannerSubtitleByView[view] || plannerSubtitleByView.mine}</div>
             <div style={{fontSize:12,color:"#6D839B",marginTop:6,lineHeight:1.4}}>{formatDateLong(todayDate)}</div>
           </div>
-          {canManageSchedule ? <button onClick={()=>setAssignmentOpen(open=>{ if (!open) resetAssignmentEditor("oneoff"); return !open })} style={{...plannerActionButtonStyle("primary"),minHeight:44,minWidth:isMobile?"100%":148}}>{assignmentOpen ? "Close" : "+ Assign"}</button> : null}
+          {(canCreateSchedule || canEditSchedule || canCreateRecurring || canEditRecurring || canCreateTasks || canEditTasks) ? <button onClick={()=>setAssignmentOpen(open=>{ if (!open) resetAssignmentEditor("oneoff"); return !open })} style={{...plannerActionButtonStyle("primary"),minHeight:44,minWidth:isMobile?"100%":148}}>{assignmentOpen ? "Close" : "+ Assign"}</button> : null}
         </div>
 
         <div style={{display:"flex",gap:10,flexWrap:"wrap",marginBottom:10}}>
@@ -7278,7 +7327,7 @@ function ScheduleTab({ activeUser, currentUser, teamUsers = [], recurringWeeklyS
         ) : null}
       </div>
 
-      {false && (view==="today" || view==="week") && canManageSchedule && (
+      {false && (view==="today" || view==="week") && (canCreateSchedule || canEditSchedule) && (
         <div style={{...plannerPanelStyle,marginBottom:sectionMargin}}>
           <div style={{marginBottom:14}}>
             <div style={{...plannerEyebrowStyle,color:plannerTheme.success}}>Operations Input</div>
@@ -7310,7 +7359,7 @@ function ScheduleTab({ activeUser, currentUser, teamUsers = [], recurringWeeklyS
                 </div>
                 <div style={plannerPillStyle}>{mineToday.blocks.length} blocks</div>
               </div>
-              {mineToday.blocks.length===0 ? <div style={plannerEmptyStyle}>No schedule items assigned for today.</div> : <div style={{display:"flex",flexDirection:"column",gap:10}}>{mineToday.blocks.map(block=>renderScheduleItem(block,{ key:`mine-block-${block.id}`, title:block.title || "Shift", subtitle:block.detail || "", accentColor:block.source==="oneoff" ? plannerTheme.success : plannerTheme.accent, badgeLabel:block.source==="oneoff" ? "One-Off" : "Recurring", onEdit:block.source==="oneoff" && canManageSchedule && canEdit ? ()=>editOneOff(block) : null, onDelete:block.source==="oneoff" && canManageSchedule && canDelete ? ()=>removeOneOff(block.id) : null }))}</div>}
+              {mineToday.blocks.length===0 ? <div style={plannerEmptyStyle}>No schedule items assigned for today.</div> : <div style={{display:"flex",flexDirection:"column",gap:10}}>{mineToday.blocks.map(block=>renderScheduleItem(block,{ key:`mine-block-${block.id}`, title:block.title || "Shift", subtitle:block.detail || "", accentColor:block.source==="oneoff" ? plannerTheme.success : plannerTheme.accent, badgeLabel:block.source==="oneoff" ? "One-Off" : "Recurring", onEdit:block.source==="oneoff" && canEditSchedule ? ()=>editOneOff(block) : null, onDelete:block.source==="oneoff" && canDeleteSchedule ? ()=>removeOneOff(block.id) : null }))}</div>}
             </div>
             <div style={plannerPersonCardStyle}>
               <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:12,marginBottom:12}}>
@@ -7349,7 +7398,7 @@ function ScheduleTab({ activeUser, currentUser, teamUsers = [], recurringWeeklyS
                     <div style={{display:"flex",flexDirection:"column",gap:14}}>
                       <div>
                         <div style={{...plannerEyebrowStyle,fontSize:10,marginBottom:8}}>Schedule</div>
-                        {row.blocks.length===0 ? <div style={plannerEmptyStyle}>No schedule blocks</div> : <div style={{display:"flex",flexDirection:"column",gap:10}}>{row.blocks.map(block=>renderScheduleItem(block,{ key:`today-block-${block.id}`, title:block.title || "Shift", subtitle:block.detail || "", accentColor:block.source==="oneoff" ? plannerTheme.success : plannerTheme.accent, badgeLabel:block.source==="oneoff" ? "One-Off" : "Recurring", onEdit:block.source==="oneoff" && canManageSchedule && canEdit ? ()=>editOneOff(block) : null, onDelete:block.source==="oneoff" && canManageSchedule && canDelete ? ()=>removeOneOff(block.id) : null }))}</div>}
+                        {row.blocks.length===0 ? <div style={plannerEmptyStyle}>No schedule blocks</div> : <div style={{display:"flex",flexDirection:"column",gap:10}}>{row.blocks.map(block=>renderScheduleItem(block,{ key:`today-block-${block.id}`, title:block.title || "Shift", subtitle:block.detail || "", accentColor:block.source==="oneoff" ? plannerTheme.success : plannerTheme.accent, badgeLabel:block.source==="oneoff" ? "One-Off" : "Recurring", onEdit:block.source==="oneoff" && canEditSchedule ? ()=>editOneOff(block) : null, onDelete:block.source==="oneoff" && canDeleteSchedule ? ()=>removeOneOff(block.id) : null }))}</div>}
                       </div>
                       <div>
                         <div style={{...plannerEyebrowStyle,fontSize:10,color:"#A7F3D0",marginBottom:8}}>Due Tasks</div>
@@ -7372,14 +7421,14 @@ function ScheduleTab({ activeUser, currentUser, teamUsers = [], recurringWeeklyS
             <div style={plannerSubheadingStyle}>Grouped by person inside each day so the team can scan assignments fast.</div>
           </div>
           <div style={{display:"grid",gridTemplateColumns:isMobile?"1fr":"repeat(2,minmax(0,1fr))",gap:12}}>
-            {weekRows.map(day=><div key={day.day} style={plannerDayCardStyle}><div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:12,marginBottom:12}}><div><div style={{fontSize:18,fontWeight:800,color:"#F8FBFF"}}>{day.day}</div><div style={{fontSize:12,color:plannerTheme.muted,marginTop:3}}>{day.label}</div></div><div style={plannerPillStyle}>{day.people.reduce((sum, person)=>sum + person.items.length, 0)} items</div></div>{day.people.length===0 ? <div style={plannerEmptyStyle}>No schedule blocks</div> : <div style={{display:"flex",flexDirection:"column",gap:10}}>{day.people.map(group=>renderPersonGroup(group, block=>renderScheduleItem(block,{ key:`week-${day.day}-${block.id}`, title:block.title || "Shift", subtitle:block.detail || "", accentColor:block.source==="oneoff" ? plannerTheme.success : plannerTheme.accent, badgeLabel:block.source==="oneoff" ? "One-Off" : "Recurring", onEdit:block.source==="oneoff" && canManageSchedule && canEdit ? ()=>editOneOff(block) : null, onDelete:block.source==="oneoff" && canManageSchedule && canDelete ? ()=>removeOneOff(block.id) : null }), `week-group-${day.day}-${group.userId}`))}</div>}</div>)}
+            {weekRows.map(day=><div key={day.day} style={plannerDayCardStyle}><div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:12,marginBottom:12}}><div><div style={{fontSize:18,fontWeight:800,color:"#F8FBFF"}}>{day.day}</div><div style={{fontSize:12,color:plannerTheme.muted,marginTop:3}}>{day.label}</div></div><div style={plannerPillStyle}>{day.people.reduce((sum, person)=>sum + person.items.length, 0)} items</div></div>{day.people.length===0 ? <div style={plannerEmptyStyle}>No schedule blocks</div> : <div style={{display:"flex",flexDirection:"column",gap:10}}>{day.people.map(group=>renderPersonGroup(group, block=>renderScheduleItem(block,{ key:`week-${day.day}-${block.id}`, title:block.title || "Shift", subtitle:block.detail || "", accentColor:block.source==="oneoff" ? plannerTheme.success : plannerTheme.accent, badgeLabel:block.source==="oneoff" ? "One-Off" : "Recurring", onEdit:block.source==="oneoff" && canEditSchedule ? ()=>editOneOff(block) : null, onDelete:block.source==="oneoff" && canDeleteSchedule ? ()=>removeOneOff(block.id) : null }), `week-group-${day.day}-${group.userId}`))}</div>}</div>)}
           </div>
         </div>
       )}
 
       {view==="tasks" && (
         <>
-          {false && canManageTasks && (
+          {false && canCreateTasks && (
             <div style={{...plannerPanelStyle,marginBottom:sectionMargin}}>
               <div style={{marginBottom:14}}>
                 <div style={{...plannerEyebrowStyle,color:plannerTheme.success}}>Task Input</div>
@@ -7435,7 +7484,7 @@ function ScheduleTab({ activeUser, currentUser, teamUsers = [], recurringWeeklyS
 
       {view==="recurring" && (
         <>
-          {false && canManageRecurring && (
+          {false && canCreateRecurring && (
             <div style={{...plannerPanelStyle,marginBottom:sectionMargin}}>
               <div style={{marginBottom:14}}>
                 <div style={plannerEyebrowStyle}>Recurring Input</div>
@@ -7459,7 +7508,7 @@ function ScheduleTab({ activeUser, currentUser, teamUsers = [], recurringWeeklyS
               <div style={plannerHeadingStyle}>Recurring Schedule by Person</div>
               <div style={plannerSubheadingStyle}>Daily sections are grouped by person, sorted by time, and built from the existing schedule data in the UI layer.</div>
             </div>
-            {recurringRows.length===0 ? <div style={plannerEmptyStyle}>No recurring schedule entries yet.</div> : <div style={{display:"grid",gridTemplateColumns:isMobile?"1fr":"repeat(2,minmax(0,1fr))",gap:12}}>{recurringDayGroups.map(day=><div key={day.day} style={plannerDayCardStyle}><div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:12,marginBottom:12}}><div><div style={{fontSize:18,fontWeight:800,color:"#F8FBFF"}}>{day.day}</div><div style={{fontSize:12,color:plannerTheme.muted,marginTop:3}}>{day.people.length} {day.people.length===1 ? "person" : "people"} scheduled</div></div><div style={plannerPillStyle}>{day.people.reduce((sum, person)=>sum + person.items.length, 0)} entries</div></div>{day.people.length===0 ? <div style={plannerEmptyStyle}>No recurring shifts</div> : <div style={{display:"flex",flexDirection:"column",gap:10}}>{day.people.map(group=>renderPersonGroup(group, entry=>renderScheduleItem(entry,{ key:`recurring-${day.day}-${entry.id}`, title:entry.note || "Recurring Shift", subtitle:`${entry.start} - ${entry.end}`, accentColor:plannerTheme.accent, badgeLabel:"Recurring", onEdit:canManageRecurring && canEdit ? ()=>editRecurring(entry) : null, onDelete:canManageRecurring && canDelete ? ()=>removeRecurring(entry.id) : null }), `recurring-group-${day.day}-${group.userId}`))}</div>}</div>)}</div>}
+            {recurringRows.length===0 ? <div style={plannerEmptyStyle}>No recurring schedule entries yet.</div> : <div style={{display:"grid",gridTemplateColumns:isMobile?"1fr":"repeat(2,minmax(0,1fr))",gap:12}}>{recurringDayGroups.map(day=><div key={day.day} style={plannerDayCardStyle}><div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:12,marginBottom:12}}><div><div style={{fontSize:18,fontWeight:800,color:"#F8FBFF"}}>{day.day}</div><div style={{fontSize:12,color:plannerTheme.muted,marginTop:3}}>{day.people.length} {day.people.length===1 ? "person" : "people"} scheduled</div></div><div style={plannerPillStyle}>{day.people.reduce((sum, person)=>sum + person.items.length, 0)} entries</div></div>{day.people.length===0 ? <div style={plannerEmptyStyle}>No recurring shifts</div> : <div style={{display:"flex",flexDirection:"column",gap:10}}>{day.people.map(group=>renderPersonGroup(group, entry=>renderScheduleItem(entry,{ key:`recurring-${day.day}-${entry.id}`, title:entry.note || "Recurring Shift", subtitle:`${entry.start} - ${entry.end}`, accentColor:plannerTheme.accent, badgeLabel:"Recurring", onEdit:canEditRecurring ? ()=>editRecurring(entry) : null, onDelete:canDeleteRecurring ? ()=>removeRecurring(entry.id) : null }), `recurring-group-${day.day}-${group.userId}`))}</div>}</div>)}</div>}
           </div>
         </>
       )}
